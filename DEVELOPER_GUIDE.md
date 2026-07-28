@@ -20,6 +20,7 @@ The implementation preserves control-plane/data-plane separation:
 - `com.distributedfs.config`
   - `DistributedFsProperties`
   - `ServiceConfiguration`
+  - `OpenApiConfiguration`
 - `com.distributedfs.model`
   - `FileManifest`, `ChunkRecord`, `ChunkWrite`, `FileListing`
 - `com.distributedfs.service`
@@ -84,6 +85,7 @@ Per repository policy, runtime-overridable values are centralized.
 | --- | --- | --- |
 | `src/main/resources/application.yml` | Default distributed FS runtime values | `distributed.fs.*` |
 | `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.storage-root`, `distributed.fs.failure-domains` |
+| `src/main/resources/application.yml` | Swagger/OpenAPI endpoint configuration | `springdoc.api-docs.path`, `springdoc.swagger-ui.path`, `springdoc.swagger-ui.operations-sorter`, `springdoc.swagger-ui.tags-sorter`, `springdoc.swagger-ui.display-request-duration` |
 
 ## API contract summary
 
@@ -113,6 +115,11 @@ Per repository policy, runtime-overridable values are centralized.
 - `POST /api/v1/workers/scan`
 - `POST /api/v1/workers/repair`
 - `POST /api/v1/workers/gc?referenceTime=<ISO-8601>`
+
+### API documentation endpoints
+
+- `GET /swagger-ui.html` - interactive Swagger UI
+- `GET /v3/api-docs` - OpenAPI JSON
 
 ## Testing strategy
 

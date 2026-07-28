@@ -14,6 +14,7 @@ This project demonstrates my approach to designing and delivering robust backend
 - Designed maintenance workers for replica scan, under-replication repair, and retention-based
   garbage collection.
 - Exposed REST APIs with centralized exception mapping and boundary validation.
+- Added interactive Swagger UI and OpenAPI docs for quick API exploration.
 - Added JUnit tests that exercise gateway and worker behavior through a local in-process cluster.
 
 ## Tech stack
@@ -70,6 +71,11 @@ Base path: `/api/v1`
 - `POST /workers/scan`
 - `POST /workers/repair`
 - `POST /workers/gc`
+
+### API docs
+
+- Swagger UI: `/swagger-ui.html`
+- OpenAPI JSON: `/v3/api-docs`
 
 ## Project layout
 
