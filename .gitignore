@@ -1,0 +1,44 @@
+# Build output
+/target/
+/out/
+
+# Maven metadata
+/release.properties
+/pom.xml.tag
+/pom.xml.releaseBackup
+/pom.xml.versionsBackup
+/pom.xml.next
+/dependency-reduced-pom.xml
+/buildNumber.properties
+
+# JVM crash logs
+hs_err_pid*
+replay_pid*
+
+# IDE and editor files
+/.idea/
+*.iml
+*.ipr
+*.iws
+/.vscode/
+*.code-workspace
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+/logs/
+
+# Environment/local overrides
+.env
+.env.*
+!.env.example
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~

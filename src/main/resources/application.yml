@@ -1,0 +1,16 @@
+distributed:
+  fs:
+    chunk-size-bytes: 1048576
+    replication-factor: 3
+    gc-retention-seconds: 3600
+    node-count: 4
+    storage-root: .dfs-storage
+    failure-domains:
+      - rack-a
+      - rack-b
+      - rack-c
+      - rack-d
+
+spring:
+  application:
+    name: distributed-file-storage-system
