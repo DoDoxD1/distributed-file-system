@@ -9,6 +9,7 @@ import java.util.List;
  */
 public record FileManifestResponse(
     String fileId,
+    String ownerUserId,
     String logicalPath,
     String versionId,
     List<String> chunkIds,
@@ -23,6 +24,7 @@ public record FileManifestResponse(
     public static FileManifestResponse fromManifest(FileManifest manifest) {
         return new FileManifestResponse(
             manifest.fileId(),
+            manifest.ownerUserId(),
             manifest.logicalPath(),
             manifest.versionId(),
             List.copyOf(manifest.chunkIds()),

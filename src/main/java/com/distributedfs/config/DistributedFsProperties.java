@@ -27,6 +27,9 @@ public class DistributedFsProperties {
     @Min(1)
     private int nodeCount = 4;
 
+    @Min(60)
+    private long sessionTtlSeconds = 604_800;
+
     private Path storageRoot = Path.of(".dfs-storage");
 
     @NotEmpty
@@ -67,6 +70,14 @@ public class DistributedFsProperties {
 
     public void setNodeCount(int nodeCount) {
         this.nodeCount = nodeCount;
+    }
+
+    public long getSessionTtlSeconds() {
+        return sessionTtlSeconds;
+    }
+
+    public void setSessionTtlSeconds(long sessionTtlSeconds) {
+        this.sessionTtlSeconds = sessionTtlSeconds;
     }
 
     public Path getStorageRoot() {

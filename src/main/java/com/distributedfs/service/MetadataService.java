@@ -187,6 +187,7 @@ public class MetadataService {
 
                 return new FileManifest(
                     fileId,
+                    null,
                     normalizedPath,
                     versionId,
                     List.copyOf(chunkIds),
@@ -1050,6 +1051,7 @@ public class MetadataService {
     private static FileManifest copyManifest(FileManifest manifest) {
         return new FileManifest(
             manifest.fileId(),
+            manifest.ownerUserId(),
             manifest.logicalPath(),
             manifest.versionId(),
             List.copyOf(manifest.chunkIds()),
@@ -1105,6 +1107,7 @@ public class MetadataService {
         private FileManifest toManifest(List<String> chunkIds) {
             return new FileManifest(
                 fileId,
+                null,
                 logicalPath,
                 versionId,
                 List.copyOf(chunkIds),

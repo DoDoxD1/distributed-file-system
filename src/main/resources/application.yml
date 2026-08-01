@@ -4,6 +4,7 @@ distributed:
     replication-factor: 3
     gc-retention-seconds: 3600
     node-count: 4
+    session-ttl-seconds: 604800
     storage-root: .dfs-storage
     failure-domains:
       - rack-a

@@ -1,16 +1,18 @@
 package com.distributedfs.config;
 
 import com.distributedfs.placement.RackAwarePlacementStrategy;
+import com.distributedfs.service.AuthenticationService;
 import com.distributedfs.service.BackgroundWorkerService;
 import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.MetadataService;
 import com.distributedfs.service.StorageNode;
+import com.distributedfs.service.UserFileService;
 import com.distributedfs.util.TimeProvider;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
-import java.time.Instant;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -46,6 +48,20 @@ public class ServiceConfiguration {
         TimeProvider timeProvider
     ) {
         return new MetadataService(jdbcTemplate, transactionManager, timeProvider);
+    }
+
+    @Bean
+    public AuthenticationService authenticationService(
+        JdbcTemplate jdbcTemplate,
+        PlatformTransactionManager transactionManager,
+        TimeProvider timeProvider
+    ) {
+        return new AuthenticationService(
+            jdbcTemplate,
+            transactionManager,
+            timeProvider,
+            properties.getSessionTtlSeconds()
+        );
     }
 
     @Bean
@@ -94,6 +110,11 @@ public class ServiceConfiguration {
         RackAwarePlacementStrategy placementStrategy
     ) {
         return new GatewayService(metadataService, storageNodes, placementStrategy, properties);
+    }
+
+    @Bean
+    public UserFileService userFileService(GatewayService gatewayService) {
+        return new UserFileService(gatewayService);
     }
 
     @Bean

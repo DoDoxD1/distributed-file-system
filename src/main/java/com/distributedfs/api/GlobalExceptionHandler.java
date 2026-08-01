@@ -1,9 +1,12 @@
 package com.distributedfs.api;
 
 import com.distributedfs.api.dto.ErrorResponse;
+import com.distributedfs.error.AuthenticationException;
+import com.distributedfs.error.AuthorizationException;
 import com.distributedfs.error.ChunkNotFoundException;
 import com.distributedfs.error.DistributedFsException;
 import com.distributedfs.error.LogicalFileNotFoundException;
+import com.distributedfs.error.UserAlreadyExistsException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.error.VersionDeletedException;
 import com.distributedfs.error.VersionNotFoundException;
@@ -51,6 +54,30 @@ public class GlobalExceptionHandler {
         HttpServletRequest request
     ) {
         return buildResponse(HttpStatus.GONE, "version_deleted", error, request);
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ErrorResponse> handleAuthenticationException(
+        AuthenticationException error,
+        HttpServletRequest request
+    ) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, "authentication_error", error, request);
+    }
+
+    @ExceptionHandler(AuthorizationException.class)
+    public ResponseEntity<ErrorResponse> handleAuthorizationException(
+        AuthorizationException error,
+        HttpServletRequest request
+    ) {
+        return buildResponse(HttpStatus.FORBIDDEN, "authorization_error", error, request);
+    }
+
+    @ExceptionHandler(UserAlreadyExistsException.class)
+    public ResponseEntity<ErrorResponse> handleUserAlreadyExistsException(
+        UserAlreadyExistsException error,
+        HttpServletRequest request
+    ) {
+        return buildResponse(HttpStatus.CONFLICT, "user_exists", error, request);
     }
 
     @ExceptionHandler(DistributedFsException.class)

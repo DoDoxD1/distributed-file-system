@@ -2,10 +2,12 @@ package com.distributedfs.cluster;
 
 import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.placement.RackAwarePlacementStrategy;
+import com.distributedfs.service.AuthenticationService;
 import com.distributedfs.service.BackgroundWorkerService;
 import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.MetadataService;
 import com.distributedfs.service.StorageNode;
+import com.distributedfs.service.UserFileService;
 import com.distributedfs.util.TimeProvider;
 import org.flywaydb.core.Flyway;
 import java.io.IOException;
@@ -82,6 +84,12 @@ public final class LocalClusterFactory {
             transactionManager,
             timeProvider
         );
+        AuthenticationService authenticationService = new AuthenticationService(
+            jdbcTemplate,
+            transactionManager,
+            timeProvider,
+            properties.getSessionTtlSeconds()
+        );
         RackAwarePlacementStrategy placementStrategy = new RackAwarePlacementStrategy();
         GatewayService gatewayService = new GatewayService(
             metadataService,
@@ -89,6 +97,7 @@ public final class LocalClusterFactory {
             placementStrategy,
             properties
         );
+        UserFileService userFileService = new UserFileService(gatewayService);
         BackgroundWorkerService workerService = new BackgroundWorkerService(
             metadataService,
             nodeMap,
@@ -99,7 +108,9 @@ public final class LocalClusterFactory {
         return new LocalCluster(
             properties,
             metadataService,
+            authenticationService,
             gatewayService,
+            userFileService,
             workerService,
             nodeMap
         );

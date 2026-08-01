@@ -8,6 +8,7 @@ import java.util.List;
  */
 public record FileManifest(
     String fileId,
+    String ownerUserId,
     String logicalPath,
     String versionId,
     List<String> chunkIds,

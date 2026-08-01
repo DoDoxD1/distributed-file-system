@@ -13,6 +13,7 @@ This project demonstrates my approach to designing and delivering robust backend
 - Added rack-aware replica placement and durability checks before publish.
 - Designed maintenance workers for replica scan, under-replication repair, and retention-based
   garbage collection.
+- Added user registration/login plus token-authenticated, per-user file namespaces.
 - Exposed REST APIs with centralized exception mapping and boundary validation.
 - Added interactive Swagger UI and OpenAPI docs for quick API exploration.
 - Added JUnit tests that exercise gateway and worker behavior through a local in-process cluster.
@@ -54,21 +55,37 @@ This project demonstrates my approach to designing and delivering robust backend
 - `repairUnderReplicatedChunks()` restores replica count toward configured durability.
 - `garbageCollect()` removes unreferenced chunks after retention threshold.
 
+### 5) Authentication and ownership
+
+- `POST /api/v1/auth/register` creates a user and returns a bearer token.
+- `POST /api/v1/auth/login` rotates to a fresh bearer token for an existing user.
+- File and worker APIs require `Authorization: Bearer <token>`.
+- Logical file paths are isolated per user, so two users can both store `/docs/report.txt`
+  independently.
+- User session lifetime is configurable with `distributed.fs.session-ttl-seconds`.
+
 ## API summary
 
 Base path: `/api/v1`
 
+### Auth
+
+- `POST /auth/register` - create a user account and session token
+- `POST /auth/login` - authenticate and rotate to a fresh session token
+
 ### Files
 
+- All file endpoints require `Authorization: Bearer <token>`.
 - `POST /files` - upload base64 payload (optional idempotency key)
 - `GET /files/content` - download payload as base64
 - `GET /files/manifest` - fetch manifest by path/version (`includeDeleted` optional)
 - `DELETE /files` - tombstone latest or specific version
-- `GET /files` - list files by prefix
-- `GET /files/versions/{encodedPath}` - list versions for a logical path
+- `GET /files` - list files by prefix within the authenticated user's namespace
+- `GET /files/versions/{encodedPath}` - list active versions for a logical path in the user's namespace
 
 ### Workers
 
+- Worker endpoints require `Authorization: Bearer <token>`.
 - `POST /workers/scan`
 - `POST /workers/repair`
 - `POST /workers/gc`
@@ -87,7 +104,7 @@ Base path: `/api/v1`
 - `src/main/java/com/distributedfs/cluster` - local in-process cluster factory
 - `src/main/java/com/distributedfs/model` - manifests, chunk records, and listings
 - `src/main/resources/db/migration` - Flyway metadata schema migrations
-- `src/test/java/com/distributedfs/service` - gateway and worker tests
+- `src/test/java/com/distributedfs/service` - gateway, auth/user namespace, and worker tests
 
 ## Configuration
 
@@ -102,6 +119,7 @@ Supported keys under `distributed.fs`:
 - `replication-factor`
 - `gc-retention-seconds`
 - `node-count`
+- `session-ttl-seconds`
 - `storage-root`
 - `failure-domains`
 
