@@ -14,6 +14,8 @@ distributed:
 spring:
   application:
     name: distributed-file-storage-system
+  config:
+    import: optional:file:.env[.properties]
   datasource:
     url: ${SUPABASE_DB_JDBC_URL:${DFS_METADATA_DATASOURCE_URL:jdbc:postgresql://localhost:5432/distributedfs}}
     username: ${SUPABASE_DB_USERNAME:${DFS_METADATA_DATASOURCE_USERNAME:distributedfs}}

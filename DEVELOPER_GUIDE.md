@@ -85,7 +85,7 @@ Per repository policy, runtime-overridable values are centralized.
 
 | Config module/file | Purpose | Runtime keys |
 | --- | --- | --- |
-| `src/main/resources/application.yml` | Default distributed FS runtime values | `distributed.fs.*` |
+| `src/main/resources/application.yml` | Default distributed FS runtime values and optional local secret import | `distributed.fs.*`, `spring.config.import` |
 | `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.storage-root`, `distributed.fs.failure-domains` |
 | `src/main/resources/application.yml` | Metadata datasource and pool configuration | `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password`, `spring.datasource.driver-class-name`, `spring.datasource.hikari.maximum-pool-size`, `spring.datasource.hikari.connection-timeout`, `spring.datasource.hikari.data-source-properties.sslmode` |
 | `src/main/resources/application.yml` | Flyway migration configuration | `spring.flyway.enabled`, `spring.flyway.locations` |
@@ -97,6 +97,10 @@ Preferred hosted metadata environment variables:
 - `SUPABASE_DB_USERNAME`
 - `SUPABASE_DB_PASSWORD`
 - `SUPABASE_DB_SSLMODE`
+
+Spring Boot optionally imports a repo-root `.env` file via `spring.config.import`, allowing
+developers to keep local secrets outside committed configuration while still resolving standard
+property placeholders.
 
 Fallback local metadata environment variables remain supported:
 

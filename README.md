@@ -121,6 +121,9 @@ The existing local overrides remain supported:
 - `DFS_METADATA_DATASOURCE_MAX_POOL_SIZE`
 - `DFS_METADATA_DATASOURCE_CONNECTION_TIMEOUT_MS`
 
+For local development, Spring Boot also imports an optional repo-root `.env` file using
+`spring.config.import`, so you can keep secrets outside `application.yml`.
+
 ## Run locally
 
 Prerequisites:
@@ -136,8 +139,8 @@ mvn spring-boot:run
 
 If your Maven environment uses a private mirror, configure credentials in `settings.xml`.
 
-For Supabase, copy the connection details from your project dashboard and set them in the shell
-before startup. Use the direct JDBC host/port form from Supabase, not the REST API URL.
+For Supabase, copy the connection details from your project dashboard into `.env` or your shell.
+Use the direct JDBC host/port form from Supabase, not the REST API URL.
 
 Typical Oracle VM deployment shape for this project:
 
