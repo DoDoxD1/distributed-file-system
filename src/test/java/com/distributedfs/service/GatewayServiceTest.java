@@ -101,6 +101,31 @@ class GatewayServiceTest {
     }
 
     @Test
+    void uploadSucceedsWhenFileContainsRepeatedChunks() {
+        LocalCluster cluster = buildCluster(
+            2,
+            2,
+            0,
+            3,
+            List.of("rack-a", "rack-b", "rack-c")
+        );
+
+        byte[] payload = "abab".getBytes();
+        FileManifest manifest = cluster.gatewayService().uploadFile(
+            "/docs/repeated-chunks.txt",
+            payload,
+            null
+        );
+
+        assertEquals(2, manifest.chunkIds().size());
+        assertEquals(manifest.chunkIds().get(0), manifest.chunkIds().get(1));
+        assertArrayEquals(
+            payload,
+            cluster.gatewayService().downloadFile("/docs/repeated-chunks.txt", null)
+        );
+    }
+
+    @Test
     void deleteHidesLatestVersionFromActiveListing() {
         LocalCluster cluster = buildCluster(
             4,

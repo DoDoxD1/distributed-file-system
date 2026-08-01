@@ -11,8 +11,10 @@ import com.distributedfs.model.ChunkWrite;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
 import com.distributedfs.util.TimeProvider;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -31,6 +33,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -581,20 +584,20 @@ public class MetadataService {
     private void ensureChunkRow(ChunkWrite chunkWrite) {
         ChunkRow currentChunk = findChunkRow(chunkWrite.chunkId());
         if (currentChunk == null) {
-            try {
-                jdbcTemplate.update(
-                    """
-                    insert into dfs_chunks(chunk_id, checksum, size_bytes, last_unreferenced_at)
-                    values (?, ?, ?, ?)
-                    """,
-                    chunkWrite.chunkId(),
-                    chunkWrite.checksum(),
-                    chunkWrite.sizeBytes(),
-                    null
-                );
+            insertIgnoringDuplicate(
+                """
+                insert into dfs_chunks(chunk_id, checksum, size_bytes, last_unreferenced_at)
+                values (?, ?, ?, ?)
+                """,
+                chunkWrite.chunkId(),
+                chunkWrite.checksum(),
+                chunkWrite.sizeBytes(),
+                null
+            );
+            currentChunk = findChunkRow(chunkWrite.chunkId());
+            if (currentChunk != null) {
+                validateExistingChunk(currentChunk, chunkWrite);
                 return;
-            } catch (DuplicateKeyException error) {
-                currentChunk = findChunkRow(chunkWrite.chunkId());
             }
         }
         validateExistingChunk(currentChunk, chunkWrite);
@@ -621,15 +624,11 @@ public class MetadataService {
     }
 
     private void insertReplica(String chunkId, String nodeId) {
-        try {
-            jdbcTemplate.update(
-                "insert into dfs_chunk_replicas(chunk_id, node_id) values (?, ?)",
-                chunkId,
-                nodeId
-            );
-        } catch (DuplicateKeyException error) {
-            return;
-        }
+        insertIgnoringDuplicate(
+            "insert into dfs_chunk_replicas(chunk_id, node_id) values (?, ?)",
+            chunkId,
+            nodeId
+        );
     }
 
     private String ensureFileId(String logicalPath) {
@@ -639,19 +638,71 @@ public class MetadataService {
         }
 
         String createdFileId = newId();
+        insertIgnoringDuplicate(
+            "insert into dfs_files(file_id, logical_path) values (?, ?)",
+            createdFileId,
+            logicalPath
+        );
+        String existingFileId = findFileIdByPath(logicalPath);
+        if (existingFileId != null) {
+            return existingFileId;
+        }
+        throw new MetadataConflictException(
+            "File metadata was not created for logical path: " + logicalPath
+        );
+    }
+
+    private boolean insertIgnoringDuplicate(String sql, Object... arguments) {
+        Connection connection = DataSourceUtils.getConnection(
+            Objects.requireNonNull(jdbcTemplate.getDataSource())
+        );
+        Savepoint savepoint = createSavepoint(connection, sql);
         try {
-            jdbcTemplate.update(
-                "insert into dfs_files(file_id, logical_path) values (?, ?)",
-                createdFileId,
-                logicalPath
-            );
-            return createdFileId;
+            jdbcTemplate.update(sql, arguments);
+            releaseSavepoint(connection, savepoint, sql);
+            return true;
         } catch (DuplicateKeyException error) {
-            String existingFileId = findFileIdByPath(logicalPath);
-            if (existingFileId != null) {
-                return existingFileId;
-            }
-            throw error;
+            rollbackToSavepoint(connection, savepoint, sql, error);
+            return false;
+        }
+    }
+
+    private Savepoint createSavepoint(Connection connection, String sql) {
+        try {
+            return connection.setSavepoint();
+        } catch (SQLException error) {
+            throw new IllegalStateException(
+                "Failed to create savepoint for SQL statement: " + sql,
+                error
+            );
+        }
+    }
+
+    private void rollbackToSavepoint(
+        Connection connection,
+        Savepoint savepoint,
+        String sql,
+        DuplicateKeyException error
+    ) {
+        try {
+            connection.rollback(savepoint);
+            releaseSavepoint(connection, savepoint, sql);
+        } catch (SQLException rollbackError) {
+            throw new IllegalStateException(
+                "Failed to roll back duplicate insert for SQL statement: " + sql,
+                rollbackError
+            );
+        }
+    }
+
+    private void releaseSavepoint(Connection connection, Savepoint savepoint, String sql) {
+        try {
+            connection.releaseSavepoint(savepoint);
+        } catch (SQLException error) {
+            throw new IllegalStateException(
+                "Failed to release savepoint for SQL statement: " + sql,
+                error
+            );
         }
     }
 
