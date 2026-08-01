@@ -231,16 +231,17 @@ public class GatewayService {
     }
 
     /**
-     * Lists all versions for one logical path.
+     * Lists active versions for one logical path.
      *
      * @param logicalPath file path
-     * @return ordered versions
+     * @return ordered active versions
      */
     public List<FileManifest> listVersions(String logicalPath) {
         String normalizedPath = normalizeLogicalPath(logicalPath);
         List<FileManifest> versions = metadataService.listVersions(normalizedPath);
         if (versions.isEmpty()) {
-            throw new LogicalFileNotFoundException("Unknown logical path: " + normalizedPath);
+            metadataService.getManifest(normalizedPath, null, true);
+            return versions;
         }
         return versions;
     }

@@ -268,10 +268,10 @@ public class MetadataService {
     }
 
     /**
-     * Lists all versions for one logical path in creation order.
+     * Lists active versions for one logical path in creation order.
      *
      * @param logicalPath file path
-     * @return versions in creation order
+     * @return active versions in creation order
      */
     public List<FileManifest> listVersions(String logicalPath) {
         String normalizedPath = requireNonBlank(logicalPath, "logicalPath");
@@ -285,7 +285,7 @@ public class MetadataService {
             """
             select version_id
             from dfs_file_versions
-            where file_id = ?
+            where file_id = ? and deleted_at is null
             order by version_number
             """,
             (resultSet, rowNum) -> resultSet.getString("version_id"),
@@ -653,8 +653,9 @@ public class MetadataService {
     }
 
     private boolean insertIgnoringDuplicate(String sql, Object... arguments) {
+        var dataSource = Objects.requireNonNull(jdbcTemplate.getDataSource());
         Connection connection = DataSourceUtils.getConnection(
-            Objects.requireNonNull(jdbcTemplate.getDataSource())
+            dataSource
         );
         Savepoint savepoint = createSavepoint(connection, sql);
         try {
@@ -664,6 +665,8 @@ public class MetadataService {
         } catch (DuplicateKeyException error) {
             rollbackToSavepoint(connection, savepoint, sql, error);
             return false;
+        } finally {
+            DataSourceUtils.releaseConnection(connection, dataSource);
         }
     }
 

@@ -148,8 +148,43 @@ class GatewayServiceTest {
         assertTrue(cluster.gatewayService().listFiles("/tmp").isEmpty());
 
         List<FileManifest> versions = cluster.gatewayService().listVersions("/tmp/a.bin");
-        assertEquals(1, versions.size());
-        assertTrue(versions.getFirst().isDeleted());
+        assertTrue(versions.isEmpty());
+    }
+
+    @Test
+    void listVersionsExcludesDeletedVersions() {
+        LocalCluster cluster = buildCluster(
+            4,
+            2,
+            0,
+            3,
+            List.of("rack-a", "rack-b", "rack-c")
+        );
+
+        FileManifest manifestV1 = cluster.gatewayService().uploadFile(
+            "/docs/versioned.txt",
+            "v1".getBytes(),
+            null
+        );
+        FileManifest manifestV2 = cluster.gatewayService().uploadFile(
+            "/docs/versioned.txt",
+            "v2".getBytes(),
+            null
+        );
+        FileManifest manifestV3 = cluster.gatewayService().uploadFile(
+            "/docs/versioned.txt",
+            "v3".getBytes(),
+            null
+        );
+
+        cluster.gatewayService().deleteFile("/docs/versioned.txt", manifestV2.versionId());
+
+        List<FileManifest> versions = cluster.gatewayService().listVersions("/docs/versioned.txt");
+        assertEquals(
+            List.of(manifestV1.versionId(), manifestV3.versionId()),
+            versions.stream().map(FileManifest::versionId).toList()
+        );
+        assertTrue(versions.stream().noneMatch(FileManifest::isDeleted));
     }
 
     @Test
