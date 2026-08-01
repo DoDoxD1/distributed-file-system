@@ -9,7 +9,7 @@ The implementation preserves control-plane/data-plane separation:
 - Control plane:
   - `GatewayService` validates requests and coordinates durable writes.
 - Metadata authority:
-  - `MetadataService` manages namespace, manifests, versions, chunk references, and tombstones.
+  - `MetadataService` manages namespace, manifests, versions, chunk references, and tombstones using transactional relational persistence.
 - Data plane:
   - `StorageNode` handles checksum-verified immutable chunk persistence.
 - Background workers:
@@ -35,6 +35,8 @@ The implementation preserves control-plane/data-plane separation:
   - domain-specific exception hierarchy
 - `com.distributedfs.util`
   - chunking and hashing helpers
+- `src/main/resources/db/migration`
+  - Flyway metadata schema migrations
 
 ## Data flow details
 
@@ -72,7 +74,7 @@ The implementation preserves control-plane/data-plane separation:
 
 ## Consistency and durability semantics
 
-- Metadata is strongly consistent in-process via read/write lock serialization.
+- Metadata is strongly consistent via database transactions scoped to manifest and chunk updates.
 - Chunk writes are acknowledged only after configured replica threshold is met.
 - Latest active listings are strongly consistent with metadata state.
 - Version deletes use tombstones before physical cleanup.
@@ -85,7 +87,24 @@ Per repository policy, runtime-overridable values are centralized.
 | --- | --- | --- |
 | `src/main/resources/application.yml` | Default distributed FS runtime values | `distributed.fs.*` |
 | `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.storage-root`, `distributed.fs.failure-domains` |
+| `src/main/resources/application.yml` | Metadata datasource and pool configuration | `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password`, `spring.datasource.driver-class-name`, `spring.datasource.hikari.maximum-pool-size`, `spring.datasource.hikari.connection-timeout`, `spring.datasource.hikari.data-source-properties.sslmode` |
+| `src/main/resources/application.yml` | Flyway migration configuration | `spring.flyway.enabled`, `spring.flyway.locations` |
 | `src/main/resources/application.yml` | Swagger/OpenAPI endpoint configuration | `springdoc.api-docs.path`, `springdoc.swagger-ui.path`, `springdoc.swagger-ui.operations-sorter`, `springdoc.swagger-ui.tags-sorter`, `springdoc.swagger-ui.display-request-duration` |
+
+Preferred hosted metadata environment variables:
+
+- `SUPABASE_DB_JDBC_URL`
+- `SUPABASE_DB_USERNAME`
+- `SUPABASE_DB_PASSWORD`
+- `SUPABASE_DB_SSLMODE`
+
+Fallback local metadata environment variables remain supported:
+
+- `DFS_METADATA_DATASOURCE_URL`
+- `DFS_METADATA_DATASOURCE_USERNAME`
+- `DFS_METADATA_DATASOURCE_PASSWORD`
+- `DFS_METADATA_DATASOURCE_MAX_POOL_SIZE`
+- `DFS_METADATA_DATASOURCE_CONNECTION_TIMEOUT_MS`
 
 ## API contract summary
 
@@ -127,15 +146,16 @@ Current tests validate behavior changes requested in `plan.md`:
 
 - `GatewayServiceTest`
   - upload/download/version/list/delete/idempotency flows
+  - metadata persistence across cluster rebuilds
 - `BackgroundWorkerServiceTest`
   - replica scan+repair lifecycle
   - retention-based garbage collection
 
-Tests are integration-style using `LocalClusterFactory` with per-test temporary storage directories.
+Tests are integration-style using `LocalClusterFactory` with per-test temporary storage directories and a file-backed H2 metadata database migrated with Flyway.
 
 ## Known MVP limits and next steps
 
-- Metadata durability is process-local and non-replicated.
+- Metadata durability depends on the configured relational database instance; Supabase improves metadata resilience, but local chunk storage and the single app host remain deployment-level SPOFs.
 - Worker scheduling is manual/API-triggered; no periodic scheduler yet.
 - No authentication/authorization in current API layer.
 - No rate limiting/backpressure controls yet.

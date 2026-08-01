@@ -9,7 +9,7 @@ This project demonstrates my approach to designing and delivering robust backend
 
 - Built end-to-end upload, download, delete, list, and version flows with immutable chunked
   storage.
-- Implemented metadata consistency with explicit read/write locking and atomic manifest commit.
+- Implemented transactional relational metadata persistence with atomic manifest commit.
 - Added rack-aware replica placement and durability checks before publish.
 - Designed maintenance workers for replica scan, under-replication repair, and retention-based
   garbage collection.
@@ -39,6 +39,7 @@ This project demonstrates my approach to designing and delivering robust backend
   - version history
   - chunk replica state
   - idempotency index
+- Metadata is persisted in a Flyway-managed relational schema and committed transactionally.
 - Manifest publish is atomic and happens only after required replica acknowledgements.
 
 ### 3) Replication and placement
@@ -85,6 +86,7 @@ Base path: `/api/v1`
 - `src/main/java/com/distributedfs/api` - controllers, DTOs, and exception handler
 - `src/main/java/com/distributedfs/cluster` - local in-process cluster factory
 - `src/main/java/com/distributedfs/model` - manifests, chunk records, and listings
+- `src/main/resources/db/migration` - Flyway metadata schema migrations
 - `src/test/java/com/distributedfs/service` - gateway and worker tests
 
 ## Configuration
@@ -103,12 +105,29 @@ Supported keys under `distributed.fs`:
 - `storage-root`
 - `failure-domains`
 
+Metadata datasource settings are configured via `spring.datasource.*` and environment overrides.
+Supabase Postgres is the preferred hosted metadata backend:
+
+- `SUPABASE_DB_JDBC_URL`
+- `SUPABASE_DB_USERNAME`
+- `SUPABASE_DB_PASSWORD`
+- `SUPABASE_DB_SSLMODE`
+
+The existing local overrides remain supported:
+
+- `DFS_METADATA_DATASOURCE_URL`
+- `DFS_METADATA_DATASOURCE_USERNAME`
+- `DFS_METADATA_DATASOURCE_PASSWORD`
+- `DFS_METADATA_DATASOURCE_MAX_POOL_SIZE`
+- `DFS_METADATA_DATASOURCE_CONNECTION_TIMEOUT_MS`
+
 ## Run locally
 
 Prerequisites:
 
 - JDK 21+
 - Maven 3.6+
+- A reachable PostgreSQL database for metadata persistence (Supabase recommended)
 
 ```bash
 mvn test
@@ -117,8 +136,17 @@ mvn spring-boot:run
 
 If your Maven environment uses a private mirror, configure credentials in `settings.xml`.
 
+For Supabase, copy the connection details from your project dashboard and set them in the shell
+before startup. Use the direct JDBC host/port form from Supabase, not the REST API URL.
+
+Typical Oracle VM deployment shape for this project:
+
+- Spring Boot app on the VM
+- Supabase Postgres or another PostgreSQL instance for metadata persistence
+- Local filesystem under `distributed.fs.storage-root` for chunk data
+
 ## Current limits
 
-- Metadata is in-memory in this MVP, so restart clears metadata state.
+- Metadata is durable in PostgreSQL, but overall system availability still depends on the single app host and local chunk storage.
 - Worker execution is API-triggered, not scheduled.
 - Metadata replication and consensus are not included yet.

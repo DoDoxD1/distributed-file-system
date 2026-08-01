@@ -127,6 +127,43 @@ class GatewayServiceTest {
         assertTrue(versions.getFirst().isDeleted());
     }
 
+    @Test
+    void uploadPersistsMetadataAcrossClusterRebuild() {
+        LocalCluster firstCluster = buildCluster(
+            4,
+            2,
+            0,
+            3,
+            List.of("rack-a", "rack-b", "rack-c")
+        );
+
+        FileManifest committedManifest = firstCluster.gatewayService().uploadFile(
+            "/docs/persisted.txt",
+            "persist-me".getBytes(),
+            null
+        );
+
+        LocalCluster secondCluster = buildCluster(
+            4,
+            2,
+            0,
+            3,
+            List.of("rack-a", "rack-b", "rack-c")
+        );
+
+        FileManifest reloadedManifest = secondCluster.gatewayService().getManifest(
+            "/docs/persisted.txt",
+            null,
+            false
+        );
+
+        assertEquals(committedManifest.versionId(), reloadedManifest.versionId());
+        assertArrayEquals(
+            "persist-me".getBytes(),
+            secondCluster.gatewayService().downloadFile("/docs/persisted.txt", null)
+        );
+    }
+
     private LocalCluster buildCluster(
         int chunkSizeBytes,
         int replicationFactor,

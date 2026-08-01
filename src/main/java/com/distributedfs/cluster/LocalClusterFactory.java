@@ -6,6 +6,8 @@ import com.distributedfs.service.BackgroundWorkerService;
 import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.MetadataService;
 import com.distributedfs.service.StorageNode;
+import com.distributedfs.util.TimeProvider;
+import org.flywaydb.core.Flyway;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +15,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
  * Factory for constructing a complete local cluster without Spring context.
@@ -55,7 +60,28 @@ public final class LocalClusterFactory {
             nodeMap.put(node.nodeId(), node);
         }
 
-        MetadataService metadataService = new MetadataService();
+        DriverManagerDataSource metadataDataSource = new DriverManagerDataSource();
+        metadataDataSource.setDriverClassName("org.h2.Driver");
+        metadataDataSource.setUrl(buildMetadataDatabaseUrl(storageRoot));
+        metadataDataSource.setUsername("sa");
+        metadataDataSource.setPassword("");
+
+        Flyway.configure()
+            .dataSource(metadataDataSource)
+            .locations("classpath:db/migration")
+            .load()
+            .migrate();
+
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(metadataDataSource);
+        DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(
+            metadataDataSource
+        );
+        TimeProvider timeProvider = java.time.Instant::now;
+        MetadataService metadataService = new MetadataService(
+            jdbcTemplate,
+            transactionManager,
+            timeProvider
+        );
         RackAwarePlacementStrategy placementStrategy = new RackAwarePlacementStrategy();
         GatewayService gatewayService = new GatewayService(
             metadataService,
@@ -77,5 +103,12 @@ public final class LocalClusterFactory {
             workerService,
             nodeMap
         );
+    }
+
+    private static String buildMetadataDatabaseUrl(Path storageRoot) {
+        String metadataPath = storageRoot.resolve("metadata-store").toAbsolutePath().toString()
+            .replace('\\', '/');
+        return "jdbc:h2:file:" + metadataPath
+            + ";MODE=PostgreSQL;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE";
     }
 }

@@ -14,6 +14,19 @@ distributed:
 spring:
   application:
     name: distributed-file-storage-system
+  datasource:
+    url: ${SUPABASE_DB_JDBC_URL:${DFS_METADATA_DATASOURCE_URL:jdbc:postgresql://localhost:5432/distributedfs}}
+    username: ${SUPABASE_DB_USERNAME:${DFS_METADATA_DATASOURCE_USERNAME:distributedfs}}
+    password: ${SUPABASE_DB_PASSWORD:${DFS_METADATA_DATASOURCE_PASSWORD:distributedfs}}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DFS_METADATA_DATASOURCE_MAX_POOL_SIZE:8}
+      connection-timeout: ${DFS_METADATA_DATASOURCE_CONNECTION_TIMEOUT_MS:30000}
+      data-source-properties:
+        sslmode: ${SUPABASE_DB_SSLMODE:require}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
 
 springdoc:
   api-docs:

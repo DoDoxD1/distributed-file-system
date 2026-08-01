@@ -32,6 +32,9 @@ Desktop.ini
 *.log
 /logs/
 
+# Local storage runtime data
+/.dfs-storage/
+
 # Environment/local overrides
 .env
 .env.*

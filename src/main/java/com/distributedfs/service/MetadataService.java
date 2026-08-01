@@ -10,30 +10,50 @@ import com.distributedfs.model.ChunkRecord;
 import com.distributedfs.model.ChunkWrite;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
+import com.distributedfs.util.TimeProvider;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Strongly consistent in-memory authority for paths, versions, manifests, and chunk references.
  */
 public class MetadataService {
 
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
-    private final Map<String, String> pathToFileId = new HashMap<>();
-    private final Map<String, List<String>> versionsByFileId = new HashMap<>();
-    private final Map<String, FileManifest> manifestsByVersionId = new HashMap<>();
-    private final Map<String, ChunkRecord> chunkRecords = new HashMap<>();
-    private final Map<IdempotencyKey, String> idempotencyIndex = new HashMap<>();
+    private final JdbcTemplate jdbcTemplate;
+    private final NamedParameterJdbcTemplate namedParameterJdbcTemplate;
+    private final TransactionTemplate transactionTemplate;
+    private final TimeProvider timeProvider;
+
+    public MetadataService(
+        JdbcTemplate jdbcTemplate,
+        PlatformTransactionManager transactionManager,
+        TimeProvider timeProvider
+    ) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.namedParameterJdbcTemplate = new NamedParameterJdbcTemplate(jdbcTemplate);
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.timeProvider = timeProvider;
+    }
 
     /**
      * Looks up previously committed manifest by idempotency key.
@@ -49,24 +69,25 @@ public class MetadataService {
         String normalizedPath = requireNonBlank(logicalPath, "logicalPath");
         String normalizedIdempotencyKey = requireNonBlank(idempotencyKey, "idempotencyKey");
 
-        lock.readLock().lock();
-        try {
-            String versionId = idempotencyIndex.get(
-                new IdempotencyKey(normalizedPath, normalizedIdempotencyKey)
-            );
-            if (versionId == null) {
-                return Optional.empty();
-            }
-
-            FileManifest manifest = manifestsByVersionId.get(versionId);
-            if (manifest == null) {
-                return Optional.empty();
-            }
-
-            return Optional.of(copyManifest(manifest));
-        } finally {
-            lock.readLock().unlock();
+        String versionId = querySingleValue(
+            """
+            select version_id
+            from dfs_idempotency_keys
+            where logical_path = ? and idempotency_key = ?
+            """,
+            String.class,
+            normalizedPath,
+            normalizedIdempotencyKey
+        );
+        if (versionId == null) {
+            return Optional.empty();
         }
+
+        FileManifest manifest = loadManifestByVersionId(versionId);
+        if (manifest == null) {
+            return Optional.empty();
+        }
+        return Optional.of(copyManifest(manifest));
     }
 
     /**
@@ -96,105 +117,97 @@ public class MetadataService {
             throw new ValidationException("sizeBytes must be non-negative, got " + sizeBytes);
         }
 
-        lock.writeLock().lock();
+        String normalizedIdempotency = normalizeNullable(idempotencyKey);
         try {
-            String normalizedIdempotency = normalizeNullable(idempotencyKey);
-            if (normalizedIdempotency != null) {
-                IdempotencyKey indexKey = new IdempotencyKey(normalizedPath, normalizedIdempotency);
-                String existingVersionId = idempotencyIndex.get(indexKey);
-                if (existingVersionId != null) {
-                    FileManifest existingManifest = manifestsByVersionId.get(existingVersionId);
-                    if (existingManifest != null) {
-                        return copyManifest(existingManifest);
+            FileManifest manifest = transactionTemplate.execute(status -> {
+                if (normalizedIdempotency != null) {
+                    Optional<FileManifest> existingManifest = findManifestByIdempotency(
+                        normalizedPath,
+                        normalizedIdempotency
+                    );
+                    if (existingManifest.isPresent()) {
+                        return existingManifest.get();
                     }
                 }
-            }
 
-            String fileId = pathToFileId.computeIfAbsent(normalizedPath, ignored -> newId());
-            String versionId = newId();
-            Instant createdAt = Instant.now();
+                String fileId = ensureFileId(normalizedPath);
+                lockFileRow(fileId);
 
-            List<String> chunkIds = new ArrayList<>();
-            for (ChunkWrite chunkWrite : normalizedChunkWrites) {
-                validateChunkWrite(chunkWrite);
+                String versionId = newId();
+                Instant createdAt = timeProvider.now();
+                long versionNumber = nextVersionNumber(fileId);
 
-                if (chunkWrite.sizeBytes() > 0 && chunkWrite.replicaNodeIds().isEmpty()) {
-                    throw new MetadataConflictException(
-                        "Chunk " + chunkWrite.chunkId() + " has no durable replicas for commit"
-                    );
-                }
-
-                chunkIds.add(chunkWrite.chunkId());
-                ChunkRecord currentRecord = chunkRecords.get(chunkWrite.chunkId());
-                if (currentRecord == null) {
-                    ChunkRecord newRecord = new ChunkRecord(
-                        chunkWrite.chunkId(),
-                        chunkWrite.checksum(),
-                        chunkWrite.sizeBytes(),
-                        new HashSet<>(chunkWrite.replicaNodeIds()),
-                        new HashSet<>(Set.of(versionId)),
-                        null
-                    );
-                    chunkRecords.put(chunkWrite.chunkId(), newRecord);
-                    continue;
-                }
-
-                if (!Objects.equals(currentRecord.checksum(), chunkWrite.checksum())) {
-                    throw new MetadataConflictException(
-                        "Checksum mismatch for chunk " + chunkWrite.chunkId() + ": "
-                            + currentRecord.checksum() + " != " + chunkWrite.checksum()
-                    );
-                }
-                if (currentRecord.sizeBytes() != chunkWrite.sizeBytes()) {
-                    throw new MetadataConflictException(
-                        "Size mismatch for chunk " + chunkWrite.chunkId() + ": "
-                            + currentRecord.sizeBytes() + " != " + chunkWrite.sizeBytes()
-                    );
-                }
-
-                Set<String> replicaNodeIds = new HashSet<>(currentRecord.replicaNodeIds());
-                replicaNodeIds.addAll(chunkWrite.replicaNodeIds());
-
-                Set<String> referencedVersionIds = new HashSet<>(
-                    currentRecord.referencedVersionIds()
-                );
-                referencedVersionIds.add(versionId);
-
-                ChunkRecord updatedRecord = new ChunkRecord(
-                    currentRecord.chunkId(),
-                    currentRecord.checksum(),
-                    currentRecord.sizeBytes(),
-                    replicaNodeIds,
-                    referencedVersionIds,
+                jdbcTemplate.update(
+                    """
+                    insert into dfs_file_versions(
+                        version_id,
+                        file_id,
+                        version_number,
+                        size_bytes,
+                        checksum,
+                        created_at,
+                        idempotency_key,
+                        deleted_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    versionId,
+                    fileId,
+                    versionNumber,
+                    sizeBytes,
+                    normalizedChecksum,
+                    toTimestamp(createdAt),
+                    normalizedIdempotency,
                     null
                 );
-                chunkRecords.put(currentRecord.chunkId(), updatedRecord);
-            }
 
-            FileManifest manifest = new FileManifest(
-                fileId,
-                normalizedPath,
-                versionId,
-                List.copyOf(chunkIds),
-                sizeBytes,
-                normalizedChecksum,
-                createdAt,
-                normalizedIdempotency,
-                null
-            );
-            manifestsByVersionId.put(versionId, manifest);
-            versionsByFileId.computeIfAbsent(fileId, ignored -> new ArrayList<>()).add(versionId);
+                List<String> chunkIds = new ArrayList<>();
+                for (int index = 0; index < normalizedChunkWrites.size(); index++) {
+                    ChunkWrite chunkWrite = normalizedChunkWrites.get(index);
+                    persistChunkWrite(versionId, index, chunkWrite);
+                    chunkIds.add(chunkWrite.chunkId());
+                }
 
-            if (normalizedIdempotency != null) {
-                idempotencyIndex.put(
-                    new IdempotencyKey(normalizedPath, normalizedIdempotency),
-                    versionId
+                if (normalizedIdempotency != null) {
+                    jdbcTemplate.update(
+                        """
+                        insert into dfs_idempotency_keys(
+                            logical_path,
+                            idempotency_key,
+                            version_id
+                        ) values (?, ?, ?)
+                        """,
+                        normalizedPath,
+                        normalizedIdempotency,
+                        versionId
+                    );
+                }
+
+                return new FileManifest(
+                    fileId,
+                    normalizedPath,
+                    versionId,
+                    List.copyOf(chunkIds),
+                    sizeBytes,
+                    normalizedChecksum,
+                    createdAt,
+                    normalizedIdempotency,
+                    null
                 );
+            });
+            return copyManifest(Objects.requireNonNull(manifest));
+        } catch (DuplicateKeyException error) {
+            if (normalizedIdempotency != null) {
+                Optional<FileManifest> existingManifest = findManifestByIdempotency(
+                    normalizedPath,
+                    normalizedIdempotency
+                );
+                if (existingManifest.isPresent()) {
+                    return existingManifest.get();
+                }
             }
-
-            return copyManifest(manifest);
-        } finally {
-            lock.writeLock().unlock();
+            throw new MetadataConflictException(
+                "Metadata commit conflicted for logical path: " + normalizedPath
+            );
         }
     }
 
@@ -209,52 +222,46 @@ public class MetadataService {
     public FileManifest getManifest(String logicalPath, String versionId, boolean includeDeleted) {
         String normalizedPath = requireNonBlank(logicalPath, "logicalPath");
 
-        lock.readLock().lock();
-        try {
-            String fileId = pathToFileId.get(normalizedPath);
-            if (fileId == null) {
-                throw new LogicalFileNotFoundException(
-                    "Unknown logical path: " + normalizedPath
+        String fileId = findFileIdByPath(normalizedPath);
+        if (fileId == null) {
+            throw new LogicalFileNotFoundException("Unknown logical path: " + normalizedPath);
+        }
+
+        String normalizedVersionId = normalizeNullable(versionId);
+        if (normalizedVersionId != null) {
+            FileManifest manifest = loadManifestByVersionId(normalizedVersionId);
+            if (manifest == null || !Objects.equals(manifest.logicalPath(), normalizedPath)) {
+                throw new VersionNotFoundException(
+                    "Version " + normalizedVersionId + " does not exist for " + normalizedPath
                 );
             }
-
-            String normalizedVersionId = normalizeNullable(versionId);
-            if (normalizedVersionId != null) {
-                FileManifest manifest = manifestsByVersionId.get(normalizedVersionId);
-                if (manifest == null || !Objects.equals(manifest.logicalPath(), normalizedPath)) {
-                    throw new VersionNotFoundException(
-                        "Version " + normalizedVersionId + " does not exist for " + normalizedPath
-                    );
-                }
-                if (manifest.deletedAt() != null && !includeDeleted) {
-                    throw new VersionDeletedException(
-                        "Version " + normalizedVersionId + " for " + normalizedPath + " is deleted"
-                    );
-                }
-                return copyManifest(manifest);
+            if (manifest.deletedAt() != null && !includeDeleted) {
+                throw new VersionDeletedException(
+                    "Version " + normalizedVersionId + " for " + normalizedPath + " is deleted"
+                );
             }
-
-            FileManifest activeManifest = latestActiveManifestUnlocked(fileId);
-            if (activeManifest != null) {
-                return copyManifest(activeManifest);
-            }
-
-            if (includeDeleted) {
-                List<String> versionIds = versionsByFileId.getOrDefault(fileId, List.of());
-                if (!versionIds.isEmpty()) {
-                    FileManifest latestManifest = manifestsByVersionId.get(
-                        versionIds.get(versionIds.size() - 1)
-                    );
-                    return copyManifest(latestManifest);
-                }
-            }
-
-            throw new LogicalFileNotFoundException(
-                "No active versions found for logical path: " + normalizedPath
-            );
-        } finally {
-            lock.readLock().unlock();
+            return copyManifest(manifest);
         }
+
+        String latestActiveVersionId = findLatestVersionId(fileId, false);
+        if (latestActiveVersionId != null) {
+            return copyManifest(
+                Objects.requireNonNull(loadManifestByVersionId(latestActiveVersionId))
+            );
+        }
+
+        if (includeDeleted) {
+            String latestVersionId = findLatestVersionId(fileId, true);
+            if (latestVersionId != null) {
+                return copyManifest(
+                    Objects.requireNonNull(loadManifestByVersionId(latestVersionId))
+                );
+            }
+        }
+
+        throw new LogicalFileNotFoundException(
+            "No active versions found for logical path: " + normalizedPath
+        );
     }
 
     /**
@@ -266,22 +273,22 @@ public class MetadataService {
     public List<FileManifest> listVersions(String logicalPath) {
         String normalizedPath = requireNonBlank(logicalPath, "logicalPath");
 
-        lock.readLock().lock();
-        try {
-            String fileId = pathToFileId.get(normalizedPath);
-            if (fileId == null) {
-                return List.of();
-            }
-
-            List<String> versionIds = versionsByFileId.getOrDefault(fileId, List.of());
-            List<FileManifest> result = new ArrayList<>();
-            for (String versionId : versionIds) {
-                result.add(copyManifest(manifestsByVersionId.get(versionId)));
-            }
-            return result;
-        } finally {
-            lock.readLock().unlock();
+        String fileId = findFileIdByPath(normalizedPath);
+        if (fileId == null) {
+            return List.of();
         }
+
+        List<String> versionIds = jdbcTemplate.query(
+            """
+            select version_id
+            from dfs_file_versions
+            where file_id = ?
+            order by version_number
+            """,
+            (resultSet, rowNum) -> resultSet.getString("version_id"),
+            fileId
+        );
+        return loadManifestsByVersionIds(versionIds);
     }
 
     /**
@@ -293,34 +300,38 @@ public class MetadataService {
     public List<FileListing> listFiles(String prefix) {
         String normalizedPrefix = prefix == null ? "" : prefix.strip();
 
-        lock.readLock().lock();
-        try {
-            List<String> sortedPaths = pathToFileId.keySet().stream().sorted().toList();
-            List<FileListing> listings = new ArrayList<>();
-
-            for (String logicalPath : sortedPaths) {
-                if (!normalizedPrefix.isEmpty() && !logicalPath.startsWith(normalizedPrefix)) {
-                    continue;
-                }
-
-                String fileId = pathToFileId.get(logicalPath);
-                FileManifest manifest = latestActiveManifestUnlocked(fileId);
-                if (manifest == null) {
-                    continue;
-                }
-
-                listings.add(new FileListing(
-                    logicalPath,
-                    manifest.versionId(),
-                    manifest.sizeBytes(),
-                    manifest.createdAt()
-                ));
-            }
-            listings.sort(Comparator.comparing(FileListing::logicalPath));
+        List<FileListing> listings = jdbcTemplate.query(
+            """
+            select f.logical_path, v.version_id, v.size_bytes, v.created_at
+            from dfs_files f
+            join dfs_file_versions v on v.file_id = f.file_id
+            where v.deleted_at is null
+                and v.version_number = (
+                    select max(v2.version_number)
+                    from dfs_file_versions v2
+                    where v2.file_id = f.file_id and v2.deleted_at is null
+                )
+            order by f.logical_path
+            """,
+            (resultSet, rowNum) -> new FileListing(
+                resultSet.getString("logical_path"),
+                resultSet.getString("version_id"),
+                resultSet.getLong("size_bytes"),
+                getInstant(resultSet, "created_at")
+            )
+        );
+        if (normalizedPrefix.isEmpty()) {
             return listings;
-        } finally {
-            lock.readLock().unlock();
         }
+
+        List<FileListing> filteredListings = new ArrayList<>();
+        for (FileListing listing : listings) {
+            if (listing.logicalPath().startsWith(normalizedPrefix)) {
+                filteredListings.add(listing);
+            }
+        }
+        filteredListings.sort(Comparator.comparing(FileListing::logicalPath));
+        return filteredListings;
     }
 
     /**
@@ -333,17 +344,17 @@ public class MetadataService {
     public FileManifest markDeleted(String logicalPath, String versionId) {
         String normalizedPath = requireNonBlank(logicalPath, "logicalPath");
 
-        lock.writeLock().lock();
-        try {
-            String fileId = pathToFileId.get(normalizedPath);
+        FileManifest deletedManifest = transactionTemplate.execute(status -> {
+            String fileId = findFileIdByPath(normalizedPath);
             if (fileId == null) {
                 throw new LogicalFileNotFoundException("Unknown logical path: " + normalizedPath);
             }
+            lockFileRow(fileId);
 
             FileManifest targetManifest;
             String normalizedVersionId = normalizeNullable(versionId);
             if (normalizedVersionId != null) {
-                FileManifest manifest = manifestsByVersionId.get(normalizedVersionId);
+                FileManifest manifest = loadManifestByVersionId(normalizedVersionId);
                 if (manifest == null || !Objects.equals(manifest.logicalPath(), normalizedPath)) {
                     throw new VersionNotFoundException(
                         "Version " + normalizedVersionId + " does not exist for " + normalizedPath
@@ -351,63 +362,41 @@ public class MetadataService {
                 }
                 targetManifest = manifest;
             } else {
-                targetManifest = latestActiveManifestUnlocked(fileId);
-                if (targetManifest == null) {
+                String latestActiveVersionId = findLatestVersionId(fileId, false);
+                if (latestActiveVersionId == null) {
                     throw new LogicalFileNotFoundException(
                         "No active version exists to delete for " + normalizedPath
                     );
                 }
+                targetManifest = Objects.requireNonNull(
+                    loadManifestByVersionId(latestActiveVersionId)
+                );
             }
 
             if (targetManifest.deletedAt() != null) {
-                return copyManifest(targetManifest);
+                return targetManifest;
             }
 
-            Instant deletedAt = Instant.now();
-            FileManifest updatedManifest = new FileManifest(
-                targetManifest.fileId(),
-                targetManifest.logicalPath(),
-                targetManifest.versionId(),
-                List.copyOf(targetManifest.chunkIds()),
-                targetManifest.sizeBytes(),
-                targetManifest.checksum(),
-                targetManifest.createdAt(),
-                targetManifest.idempotencyKey(),
-                deletedAt
+            Instant deletedAt = timeProvider.now();
+            jdbcTemplate.update(
+                "update dfs_file_versions set deleted_at = ? where version_id = ?",
+                toTimestamp(deletedAt),
+                targetManifest.versionId()
             );
-            manifestsByVersionId.put(updatedManifest.versionId(), updatedManifest);
 
             for (String chunkId : targetManifest.chunkIds()) {
-                ChunkRecord chunkRecord = chunkRecords.get(chunkId);
-                if (chunkRecord == null) {
-                    continue;
+                if (countActiveReferences(chunkId) == 0) {
+                    jdbcTemplate.update(
+                        "update dfs_chunks set last_unreferenced_at = ? where chunk_id = ?",
+                        toTimestamp(deletedAt),
+                        chunkId
+                    );
                 }
-
-                Set<String> referencedVersionIds = new HashSet<>(
-                    chunkRecord.referencedVersionIds()
-                );
-                referencedVersionIds.remove(updatedManifest.versionId());
-
-                Instant lastUnreferencedAt = chunkRecord.lastUnreferencedAt();
-                if (referencedVersionIds.isEmpty()) {
-                    lastUnreferencedAt = deletedAt;
-                }
-
-                ChunkRecord updatedRecord = new ChunkRecord(
-                    chunkRecord.chunkId(),
-                    chunkRecord.checksum(),
-                    chunkRecord.sizeBytes(),
-                    new HashSet<>(chunkRecord.replicaNodeIds()),
-                    referencedVersionIds,
-                    lastUnreferencedAt
-                );
-                chunkRecords.put(chunkRecord.chunkId(), updatedRecord);
             }
 
-            return copyManifest(updatedManifest);
-        } finally {
-            lock.writeLock().unlock();
-        }
+            return Objects.requireNonNull(loadManifestByVersionId(targetManifest.versionId()));
+        });
+        return copyManifest(Objects.requireNonNull(deletedManifest));
     }
 
     /**
@@ -419,16 +408,11 @@ public class MetadataService {
     public ChunkRecord getChunkRecord(String chunkId) {
         String normalizedChunkId = requireNonBlank(chunkId, "chunkId");
 
-        lock.readLock().lock();
-        try {
-            ChunkRecord chunkRecord = chunkRecords.get(normalizedChunkId);
-            if (chunkRecord == null) {
-                throw new ChunkNotFoundException("Chunk not found: " + normalizedChunkId);
-            }
-            return copyChunkRecord(chunkRecord);
-        } finally {
-            lock.readLock().unlock();
+        Optional<ChunkRecord> chunkRecord = getChunkRecordOrEmpty(normalizedChunkId);
+        if (chunkRecord.isEmpty()) {
+            throw new ChunkNotFoundException("Chunk not found: " + normalizedChunkId);
         }
+        return copyChunkRecord(chunkRecord.get());
     }
 
     /**
@@ -440,16 +424,11 @@ public class MetadataService {
     public Optional<ChunkRecord> getChunkRecordOrEmpty(String chunkId) {
         String normalizedChunkId = requireNonBlank(chunkId, "chunkId");
 
-        lock.readLock().lock();
-        try {
-            ChunkRecord chunkRecord = chunkRecords.get(normalizedChunkId);
-            if (chunkRecord == null) {
-                return Optional.empty();
-            }
-            return Optional.of(copyChunkRecord(chunkRecord));
-        } finally {
-            lock.readLock().unlock();
+        List<ChunkRecord> chunkRecords = loadChunkRecordsByIds(List.of(normalizedChunkId));
+        if (chunkRecords.isEmpty()) {
+            return Optional.empty();
         }
+        return Optional.of(copyChunkRecord(chunkRecords.getFirst()));
     }
 
     /**
@@ -458,16 +437,13 @@ public class MetadataService {
      * @return chunk record snapshot
      */
     public List<ChunkRecord> listChunkRecords() {
-        lock.readLock().lock();
-        try {
-            List<ChunkRecord> snapshot = new ArrayList<>();
-            for (ChunkRecord chunkRecord : chunkRecords.values()) {
-                snapshot.add(copyChunkRecord(chunkRecord));
-            }
-            return snapshot;
-        } finally {
-            lock.readLock().unlock();
-        }
+        return loadChunkRecordsByQuery(
+            """
+            select chunk_id, checksum, size_bytes, last_unreferenced_at
+            from dfs_chunks
+            order by chunk_id
+            """
+        );
     }
 
     /**
@@ -480,28 +456,16 @@ public class MetadataService {
         String normalizedChunkId = requireNonBlank(chunkId, "chunkId");
         String normalizedNodeId = requireNonBlank(nodeId, "nodeId");
 
-        lock.writeLock().lock();
-        try {
-            ChunkRecord chunkRecord = chunkRecords.get(normalizedChunkId);
-            if (chunkRecord == null) {
+        transactionTemplate.executeWithoutResult(status -> {
+            if (findChunkRow(normalizedChunkId) == null) {
                 throw new ChunkNotFoundException("Chunk not found: " + normalizedChunkId);
             }
-
-            Set<String> replicaNodeIds = new HashSet<>(chunkRecord.replicaNodeIds());
-            replicaNodeIds.remove(normalizedNodeId);
-
-            ChunkRecord updatedRecord = new ChunkRecord(
-                chunkRecord.chunkId(),
-                chunkRecord.checksum(),
-                chunkRecord.sizeBytes(),
-                replicaNodeIds,
-                new HashSet<>(chunkRecord.referencedVersionIds()),
-                chunkRecord.lastUnreferencedAt()
+            jdbcTemplate.update(
+                "delete from dfs_chunk_replicas where chunk_id = ? and node_id = ?",
+                normalizedChunkId,
+                normalizedNodeId
             );
-            chunkRecords.put(normalizedChunkId, updatedRecord);
-        } finally {
-            lock.writeLock().unlock();
-        }
+        });
     }
 
     /**
@@ -514,28 +478,12 @@ public class MetadataService {
         String normalizedChunkId = requireNonBlank(chunkId, "chunkId");
         String normalizedNodeId = requireNonBlank(nodeId, "nodeId");
 
-        lock.writeLock().lock();
-        try {
-            ChunkRecord chunkRecord = chunkRecords.get(normalizedChunkId);
-            if (chunkRecord == null) {
+        transactionTemplate.executeWithoutResult(status -> {
+            if (findChunkRow(normalizedChunkId) == null) {
                 throw new ChunkNotFoundException("Chunk not found: " + normalizedChunkId);
             }
-
-            Set<String> replicaNodeIds = new HashSet<>(chunkRecord.replicaNodeIds());
-            replicaNodeIds.add(normalizedNodeId);
-
-            ChunkRecord updatedRecord = new ChunkRecord(
-                chunkRecord.chunkId(),
-                chunkRecord.checksum(),
-                chunkRecord.sizeBytes(),
-                replicaNodeIds,
-                new HashSet<>(chunkRecord.referencedVersionIds()),
-                chunkRecord.lastUnreferencedAt()
-            );
-            chunkRecords.put(normalizedChunkId, updatedRecord);
-        } finally {
-            lock.writeLock().unlock();
-        }
+            insertReplica(normalizedChunkId, normalizedNodeId);
+        });
     }
 
     /**
@@ -555,28 +503,25 @@ public class MetadataService {
             );
         }
 
-        Instant nowValue = referenceTime == null ? Instant.now() : referenceTime;
+        Instant nowValue = referenceTime == null ? timeProvider.now() : referenceTime;
         Instant cutoff = nowValue.minusSeconds(retentionSeconds);
 
-        lock.readLock().lock();
-        try {
-            List<ChunkRecord> candidates = new ArrayList<>();
-            for (ChunkRecord chunkRecord : chunkRecords.values()) {
-                if (!chunkRecord.referencedVersionIds().isEmpty()) {
-                    continue;
-                }
-                Instant lastUnreferencedAt = chunkRecord.lastUnreferencedAt();
-                if (lastUnreferencedAt == null) {
-                    continue;
-                }
-                if (!lastUnreferencedAt.isAfter(cutoff)) {
-                    candidates.add(copyChunkRecord(chunkRecord));
-                }
-            }
-            return candidates;
-        } finally {
-            lock.readLock().unlock();
-        }
+        return loadChunkRecordsByQuery(
+            """
+            select chunk_id, checksum, size_bytes, last_unreferenced_at
+            from dfs_chunks c
+            where c.last_unreferenced_at is not null
+                and c.last_unreferenced_at <= ?
+                and not exists (
+                    select 1
+                    from dfs_version_chunks vc
+                    join dfs_file_versions fv on fv.version_id = vc.version_id
+                    where vc.chunk_id = c.chunk_id and fv.deleted_at is null
+                )
+            order by c.chunk_id
+            """,
+            toTimestamp(cutoff)
+        );
     }
 
     /**
@@ -587,33 +532,449 @@ public class MetadataService {
     public void purgeChunkRecord(String chunkId) {
         String normalizedChunkId = requireNonBlank(chunkId, "chunkId");
 
-        lock.writeLock().lock();
-        try {
-            ChunkRecord chunkRecord = chunkRecords.get(normalizedChunkId);
-            if (chunkRecord == null) {
+        transactionTemplate.executeWithoutResult(status -> {
+            if (findChunkRow(normalizedChunkId) == null) {
                 return;
             }
-            if (!chunkRecord.referencedVersionIds().isEmpty()) {
+            if (countActiveReferences(normalizedChunkId) > 0) {
                 throw new MetadataConflictException(
                     "Cannot purge referenced chunk " + normalizedChunkId
                         + "; references still exist"
                 );
             }
-            chunkRecords.remove(normalizedChunkId);
-        } finally {
-            lock.writeLock().unlock();
+            jdbcTemplate.update(
+                "delete from dfs_chunk_replicas where chunk_id = ?",
+                normalizedChunkId
+            );
+            jdbcTemplate.update(
+                "delete from dfs_chunks where chunk_id = ?",
+                normalizedChunkId
+            );
+        });
+    }
+
+    private void persistChunkWrite(String versionId, int chunkOrder, ChunkWrite chunkWrite) {
+        validateChunkWrite(chunkWrite);
+        if (chunkWrite.sizeBytes() > 0 && chunkWrite.replicaNodeIds().isEmpty()) {
+            throw new MetadataConflictException(
+                "Chunk " + chunkWrite.chunkId() + " has no durable replicas for commit"
+            );
+        }
+
+        ensureChunkRow(chunkWrite);
+        jdbcTemplate.update(
+            "update dfs_chunks set last_unreferenced_at = ? where chunk_id = ?",
+            null,
+            chunkWrite.chunkId()
+        );
+        for (String nodeId : chunkWrite.replicaNodeIds().stream().sorted().toList()) {
+            insertReplica(chunkWrite.chunkId(), nodeId);
+        }
+        jdbcTemplate.update(
+            "insert into dfs_version_chunks(version_id, chunk_order, chunk_id) values (?, ?, ?)",
+            versionId,
+            chunkOrder,
+            chunkWrite.chunkId()
+        );
+    }
+
+    private void ensureChunkRow(ChunkWrite chunkWrite) {
+        ChunkRow currentChunk = findChunkRow(chunkWrite.chunkId());
+        if (currentChunk == null) {
+            try {
+                jdbcTemplate.update(
+                    """
+                    insert into dfs_chunks(chunk_id, checksum, size_bytes, last_unreferenced_at)
+                    values (?, ?, ?, ?)
+                    """,
+                    chunkWrite.chunkId(),
+                    chunkWrite.checksum(),
+                    chunkWrite.sizeBytes(),
+                    null
+                );
+                return;
+            } catch (DuplicateKeyException error) {
+                currentChunk = findChunkRow(chunkWrite.chunkId());
+            }
+        }
+        validateExistingChunk(currentChunk, chunkWrite);
+    }
+
+    private void validateExistingChunk(ChunkRow currentChunk, ChunkWrite chunkWrite) {
+        if (currentChunk == null) {
+            throw new MetadataConflictException(
+                "Chunk state disappeared during commit for chunk " + chunkWrite.chunkId()
+            );
+        }
+        if (!Objects.equals(currentChunk.checksum(), chunkWrite.checksum())) {
+            throw new MetadataConflictException(
+                "Checksum mismatch for chunk " + chunkWrite.chunkId() + ": "
+                    + currentChunk.checksum() + " != " + chunkWrite.checksum()
+            );
+        }
+        if (currentChunk.sizeBytes() != chunkWrite.sizeBytes()) {
+            throw new MetadataConflictException(
+                "Size mismatch for chunk " + chunkWrite.chunkId() + ": "
+                    + currentChunk.sizeBytes() + " != " + chunkWrite.sizeBytes()
+            );
         }
     }
 
-    private FileManifest latestActiveManifestUnlocked(String fileId) {
-        List<String> versionIds = versionsByFileId.getOrDefault(fileId, List.of());
-        for (int index = versionIds.size() - 1; index >= 0; index--) {
-            FileManifest candidate = manifestsByVersionId.get(versionIds.get(index));
-            if (candidate != null && candidate.deletedAt() == null) {
-                return candidate;
-            }
+    private void insertReplica(String chunkId, String nodeId) {
+        try {
+            jdbcTemplate.update(
+                "insert into dfs_chunk_replicas(chunk_id, node_id) values (?, ?)",
+                chunkId,
+                nodeId
+            );
+        } catch (DuplicateKeyException error) {
+            return;
         }
-        return null;
+    }
+
+    private String ensureFileId(String logicalPath) {
+        String fileId = findFileIdByPath(logicalPath);
+        if (fileId != null) {
+            return fileId;
+        }
+
+        String createdFileId = newId();
+        try {
+            jdbcTemplate.update(
+                "insert into dfs_files(file_id, logical_path) values (?, ?)",
+                createdFileId,
+                logicalPath
+            );
+            return createdFileId;
+        } catch (DuplicateKeyException error) {
+            String existingFileId = findFileIdByPath(logicalPath);
+            if (existingFileId != null) {
+                return existingFileId;
+            }
+            throw error;
+        }
+    }
+
+    private String findFileIdByPath(String logicalPath) {
+        return querySingleValue(
+            "select file_id from dfs_files where logical_path = ?",
+            String.class,
+            logicalPath
+        );
+    }
+
+    private void lockFileRow(String fileId) {
+        querySingleValue(
+            "select file_id from dfs_files where file_id = ? for update",
+            String.class,
+            fileId
+        );
+    }
+
+    private long nextVersionNumber(String fileId) {
+        Long nextVersionNumber = querySingleValue(
+            "select coalesce(max(version_number), 0) + 1 from dfs_file_versions where file_id = ?",
+            Long.class,
+            fileId
+        );
+        return nextVersionNumber == null ? 1L : nextVersionNumber;
+    }
+
+    private String findLatestVersionId(String fileId, boolean includeDeleted) {
+        String sql = includeDeleted
+            ? """
+                select version_id
+                from dfs_file_versions
+                where file_id = ?
+                order by version_number desc
+                limit 1
+                """
+            : """
+                select version_id
+                from dfs_file_versions
+                where file_id = ? and deleted_at is null
+                order by version_number desc
+                limit 1
+                """;
+        return querySingleValue(sql, String.class, fileId);
+    }
+
+    private FileManifest loadManifestByVersionId(String versionId) {
+        ManifestRow manifestRow = querySingle(
+            """
+            select v.version_id, v.file_id, f.logical_path, v.size_bytes, v.checksum,
+                v.created_at, v.idempotency_key, v.deleted_at
+            from dfs_file_versions v
+            join dfs_files f on f.file_id = v.file_id
+            where v.version_id = ?
+            """,
+            (resultSet, rowNum) -> new ManifestRow(
+                resultSet.getString("file_id"),
+                resultSet.getString("logical_path"),
+                resultSet.getString("version_id"),
+                resultSet.getLong("size_bytes"),
+                resultSet.getString("checksum"),
+                getInstant(resultSet, "created_at"),
+                resultSet.getString("idempotency_key"),
+                getInstant(resultSet, "deleted_at")
+            ),
+            versionId
+        );
+        if (manifestRow == null) {
+            return null;
+        }
+
+        List<String> chunkIds = jdbcTemplate.query(
+            """
+            select chunk_id
+            from dfs_version_chunks
+            where version_id = ?
+            order by chunk_order
+            """,
+            (resultSet, rowNum) -> resultSet.getString("chunk_id"),
+            versionId
+        );
+        return manifestRow.toManifest(chunkIds);
+    }
+
+    private List<FileManifest> loadManifestsByVersionIds(List<String> versionIds) {
+        if (versionIds.isEmpty()) {
+            return List.of();
+        }
+
+        MapSqlParameterSource parameters = new MapSqlParameterSource("versionIds", versionIds);
+        List<ManifestRow> manifestRows = namedParameterJdbcTemplate.query(
+            """
+            select v.version_id, v.file_id, f.logical_path, v.size_bytes, v.checksum,
+                v.created_at, v.idempotency_key, v.deleted_at
+            from dfs_file_versions v
+            join dfs_files f on f.file_id = v.file_id
+            where v.version_id in (:versionIds)
+            """,
+            parameters,
+            (resultSet, rowNum) -> new ManifestRow(
+                resultSet.getString("file_id"),
+                resultSet.getString("logical_path"),
+                resultSet.getString("version_id"),
+                resultSet.getLong("size_bytes"),
+                resultSet.getString("checksum"),
+                getInstant(resultSet, "created_at"),
+                resultSet.getString("idempotency_key"),
+                getInstant(resultSet, "deleted_at")
+            )
+        );
+
+        Map<String, ManifestRow> manifestRowsByVersionId = new LinkedHashMap<>();
+        for (ManifestRow manifestRow : manifestRows) {
+            manifestRowsByVersionId.put(manifestRow.versionId(), manifestRow);
+        }
+
+        Map<String, List<String>> chunkIdsByVersionId = new HashMap<>();
+        List<VersionChunkRow> versionChunkRows = namedParameterJdbcTemplate.query(
+            """
+            select version_id, chunk_id
+            from dfs_version_chunks
+            where version_id in (:versionIds)
+            order by version_id, chunk_order
+            """,
+            parameters,
+            (resultSet, rowNum) -> new VersionChunkRow(
+                resultSet.getString("version_id"),
+                resultSet.getString("chunk_id")
+            )
+        );
+        for (VersionChunkRow versionChunkRow : versionChunkRows) {
+            chunkIdsByVersionId.computeIfAbsent(
+                versionChunkRow.versionId(),
+                ignored -> new ArrayList<>()
+            ).add(versionChunkRow.chunkId());
+        }
+
+        List<FileManifest> manifests = new ArrayList<>();
+        for (String versionId : versionIds) {
+            ManifestRow manifestRow = manifestRowsByVersionId.get(versionId);
+            if (manifestRow == null) {
+                continue;
+            }
+            manifests.add(
+                manifestRow.toManifest(chunkIdsByVersionId.getOrDefault(versionId, List.of()))
+            );
+        }
+        return manifests;
+    }
+
+    private ChunkRow findChunkRow(String chunkId) {
+        return querySingle(
+            """
+            select chunk_id, checksum, size_bytes, last_unreferenced_at
+            from dfs_chunks
+            where chunk_id = ?
+            """,
+            (resultSet, rowNum) -> new ChunkRow(
+                resultSet.getString("chunk_id"),
+                resultSet.getString("checksum"),
+                resultSet.getInt("size_bytes"),
+                getInstant(resultSet, "last_unreferenced_at")
+            ),
+            chunkId
+        );
+    }
+
+    private List<ChunkRecord> loadChunkRecordsByIds(List<String> chunkIds) {
+        if (chunkIds.isEmpty()) {
+            return List.of();
+        }
+
+        MapSqlParameterSource parameters = new MapSqlParameterSource("chunkIds", chunkIds);
+        List<ChunkRow> chunkRows = namedParameterJdbcTemplate.query(
+            """
+            select chunk_id, checksum, size_bytes, last_unreferenced_at
+            from dfs_chunks
+            where chunk_id in (:chunkIds)
+            order by chunk_id
+            """,
+            parameters,
+            (resultSet, rowNum) -> new ChunkRow(
+                resultSet.getString("chunk_id"),
+                resultSet.getString("checksum"),
+                resultSet.getInt("size_bytes"),
+                getInstant(resultSet, "last_unreferenced_at")
+            )
+        );
+        return buildChunkRecords(chunkRows);
+    }
+
+    private List<ChunkRecord> loadChunkRecordsByQuery(String sql, Object... args) {
+        List<ChunkRow> chunkRows = jdbcTemplate.query(
+            sql,
+            (resultSet, rowNum) -> new ChunkRow(
+                resultSet.getString("chunk_id"),
+                resultSet.getString("checksum"),
+                resultSet.getInt("size_bytes"),
+                getInstant(resultSet, "last_unreferenced_at")
+            ),
+            args
+        );
+        return buildChunkRecords(chunkRows);
+    }
+
+    private List<ChunkRecord> buildChunkRecords(List<ChunkRow> chunkRows) {
+        if (chunkRows.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> chunkIds = chunkRows.stream().map(ChunkRow::chunkId).toList();
+        Map<String, Set<String>> replicasByChunkId = loadReplicaNodeIds(chunkIds);
+        Map<String, Set<String>> referencesByChunkId = loadActiveReferenceVersionIds(chunkIds);
+
+        List<ChunkRecord> chunkRecords = new ArrayList<>();
+        for (ChunkRow chunkRow : chunkRows) {
+            chunkRecords.add(new ChunkRecord(
+                chunkRow.chunkId(),
+                chunkRow.checksum(),
+                chunkRow.sizeBytes(),
+                replicasByChunkId.getOrDefault(chunkRow.chunkId(), Set.of()),
+                referencesByChunkId.getOrDefault(chunkRow.chunkId(), Set.of()),
+                chunkRow.lastUnreferencedAt()
+            ));
+        }
+        return chunkRecords;
+    }
+
+    private Map<String, Set<String>> loadReplicaNodeIds(List<String> chunkIds) {
+        Map<String, Set<String>> replicaNodeIds = new HashMap<>();
+        MapSqlParameterSource parameters = new MapSqlParameterSource("chunkIds", chunkIds);
+        List<ChunkReplicaRow> chunkReplicaRows = namedParameterJdbcTemplate.query(
+            """
+            select chunk_id, node_id
+            from dfs_chunk_replicas
+            where chunk_id in (:chunkIds)
+            order by chunk_id, node_id
+            """,
+            parameters,
+            (resultSet, rowNum) -> new ChunkReplicaRow(
+                resultSet.getString("chunk_id"),
+                resultSet.getString("node_id")
+            )
+        );
+        for (ChunkReplicaRow chunkReplicaRow : chunkReplicaRows) {
+            replicaNodeIds.computeIfAbsent(
+                chunkReplicaRow.chunkId(),
+                ignored -> new HashSet<>()
+            ).add(chunkReplicaRow.nodeId());
+        }
+        return replicaNodeIds;
+    }
+
+    private Map<String, Set<String>> loadActiveReferenceVersionIds(List<String> chunkIds) {
+        Map<String, Set<String>> referencedVersionIds = new HashMap<>();
+        MapSqlParameterSource parameters = new MapSqlParameterSource("chunkIds", chunkIds);
+        List<ChunkReferenceRow> chunkReferenceRows = namedParameterJdbcTemplate.query(
+            """
+            select vc.chunk_id, vc.version_id
+            from dfs_version_chunks vc
+            join dfs_file_versions fv on fv.version_id = vc.version_id
+            where vc.chunk_id in (:chunkIds) and fv.deleted_at is null
+            order by vc.chunk_id, vc.version_id
+            """,
+            parameters,
+            (resultSet, rowNum) -> new ChunkReferenceRow(
+                resultSet.getString("chunk_id"),
+                resultSet.getString("version_id")
+            )
+        );
+        for (ChunkReferenceRow chunkReferenceRow : chunkReferenceRows) {
+            referencedVersionIds.computeIfAbsent(
+                chunkReferenceRow.chunkId(),
+                ignored -> new HashSet<>()
+            ).add(chunkReferenceRow.versionId());
+        }
+        return referencedVersionIds;
+    }
+
+    private int countActiveReferences(String chunkId) {
+        Integer activeReferenceCount = querySingleValue(
+            """
+            select count(*)
+            from dfs_version_chunks vc
+            join dfs_file_versions fv on fv.version_id = vc.version_id
+            where vc.chunk_id = ? and fv.deleted_at is null
+            """,
+            Integer.class,
+            chunkId
+        );
+        return activeReferenceCount == null ? 0 : activeReferenceCount;
+    }
+
+    private <T> T querySingle(String sql, RowMapper<T> rowMapper, Object... args) {
+        List<T> results = jdbcTemplate.query(sql, rowMapper, args);
+        if (results.isEmpty()) {
+            return null;
+        }
+        return results.getFirst();
+    }
+
+    private <T> T querySingleValue(String sql, Class<T> type, Object... args) {
+        List<T> results = jdbcTemplate.queryForList(sql, type, args);
+        if (results.isEmpty()) {
+            return null;
+        }
+        return results.getFirst();
+    }
+
+    private static Instant getInstant(ResultSet resultSet, String columnName) throws SQLException {
+        Timestamp timestamp = resultSet.getTimestamp(columnName);
+        if (timestamp == null) {
+            return null;
+        }
+        return timestamp.toInstant();
+    }
+
+    private static Timestamp toTimestamp(Instant instant) {
+        if (instant == null) {
+            return null;
+        }
+        return Timestamp.from(instant);
     }
 
     private static void validateChunkWrite(ChunkWrite chunkWrite) {
@@ -676,6 +1037,46 @@ public class MetadataService {
         return value.strip();
     }
 
-    private record IdempotencyKey(String logicalPath, String idempotencyKey) {
+    private record ManifestRow(
+        String fileId,
+        String logicalPath,
+        String versionId,
+        long sizeBytes,
+        String checksum,
+        Instant createdAt,
+        String idempotencyKey,
+        Instant deletedAt
+    ) {
+
+        private FileManifest toManifest(List<String> chunkIds) {
+            return new FileManifest(
+                fileId,
+                logicalPath,
+                versionId,
+                List.copyOf(chunkIds),
+                sizeBytes,
+                checksum,
+                createdAt,
+                idempotencyKey,
+                deletedAt
+            );
+        }
+    }
+
+    private record ChunkRow(
+        String chunkId,
+        String checksum,
+        int sizeBytes,
+        Instant lastUnreferencedAt
+    ) {
+    }
+
+    private record VersionChunkRow(String versionId, String chunkId) {
+    }
+
+    private record ChunkReplicaRow(String chunkId, String nodeId) {
+    }
+
+    private record ChunkReferenceRow(String chunkId, String versionId) {
     }
 }

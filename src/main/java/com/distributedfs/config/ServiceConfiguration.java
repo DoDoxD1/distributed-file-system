@@ -5,8 +5,10 @@ import com.distributedfs.service.BackgroundWorkerService;
 import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.MetadataService;
 import com.distributedfs.service.StorageNode;
+import com.distributedfs.util.TimeProvider;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
+import java.time.Instant;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -16,6 +18,8 @@ import java.util.Map;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * Creates in-memory metadata, local storage nodes, and orchestrator services.
@@ -36,8 +40,17 @@ public class ServiceConfiguration {
     }
 
     @Bean
-    public MetadataService metadataService() {
-        return new MetadataService();
+    public MetadataService metadataService(
+        JdbcTemplate jdbcTemplate,
+        PlatformTransactionManager transactionManager,
+        TimeProvider timeProvider
+    ) {
+        return new MetadataService(jdbcTemplate, transactionManager, timeProvider);
+    }
+
+    @Bean
+    public TimeProvider timeProvider() {
+        return Instant::now;
     }
 
     @Bean
