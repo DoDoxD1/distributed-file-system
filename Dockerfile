@@ -10,4 +10,4 @@ WORKDIR /app
 RUN useradd --system --uid 10001 --create-home --home-dir /app appuser && mkdir -p /data/chunks && chown -R appuser:appuser /app /data
 COPY --from=build /workspace/app.jar /app/app.jar
 EXPOSE 8080
-ENTRYPOINT ["sh", "-c", "mkdir -p /data/chunks && chown -R appuser:appuser /data/chunks && exec su -p -s /bin/sh appuser -c 'java $JAVA_OPTS -jar /app/app.jar'"]
+ENTRYPOINT ["sh", "-c", "mkdir -p /data/chunks && chown -R appuser:appuser /data/chunks && exec su -p -s /bin/sh appuser -c '/opt/java/openjdk/bin/java $JAVA_OPTS -jar /app/app.jar'"]
