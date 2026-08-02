@@ -6,10 +6,12 @@ import com.distributedfs.api.dto.FileListingResponse;
 import com.distributedfs.api.dto.FileManifestResponse;
 import com.distributedfs.api.dto.UploadFileRequest;
 import com.distributedfs.api.dto.UploadFileResponse;
+import com.distributedfs.config.OpenApiConfiguration;
 import com.distributedfs.model.AuthenticatedUser;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
 import com.distributedfs.service.UserFileService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/files")
+@SecurityRequirement(name = OpenApiConfiguration.BEARER_AUTH_SCHEME)
 public class FileController {
 
     private final UserFileService userFileService;

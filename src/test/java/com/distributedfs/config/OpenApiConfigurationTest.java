@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -27,5 +28,12 @@ class OpenApiConfigurationTest {
         assertEquals("Distributed File Storage Maintainer", info.getContact().getName());
         assertNotNull(info.getLicense());
         assertEquals("Internal/Personal Project", info.getLicense().getName());
+        assertNotNull(openApi.getComponents());
+        SecurityScheme bearerScheme = openApi.getComponents().getSecuritySchemes()
+            .get(OpenApiConfiguration.BEARER_AUTH_SCHEME);
+        assertNotNull(bearerScheme);
+        assertEquals(SecurityScheme.Type.HTTP, bearerScheme.getType());
+        assertEquals("bearer", bearerScheme.getScheme());
+        assertEquals("opaque", bearerScheme.getBearerFormat());
     }
 }

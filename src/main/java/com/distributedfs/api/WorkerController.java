@@ -1,8 +1,10 @@
 package com.distributedfs.api;
 
 import com.distributedfs.api.dto.WorkerRunResponse;
+import com.distributedfs.config.OpenApiConfiguration;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.service.BackgroundWorkerService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import org.springframework.http.MediaType;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/workers")
+@SecurityRequirement(name = OpenApiConfiguration.BEARER_AUTH_SCHEME)
 public class WorkerController {
 
     private final BackgroundWorkerService backgroundWorkerService;
