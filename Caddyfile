@@ -1,0 +1,4 @@
+{$APP_HOSTNAME} {
+    encode gzip
+    reverse_proxy {$APP_UPSTREAM}
+}

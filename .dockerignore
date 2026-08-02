@@ -1,0 +1,8 @@
+target
+.dfs-storage
+data
+.git
+.idea
+.vscode
+.env
+*.log

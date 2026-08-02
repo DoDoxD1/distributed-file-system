@@ -1,0 +1,44 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: distributed-file-storage-system:v1
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8080
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      DISTRIBUTED_FS_STORAGE_ROOT: ${DISTRIBUTED_FS_STORAGE_ROOT:-/data/chunks}
+      DISTRIBUTED_FS_REFRESH_COOKIE_SECURE: ${DISTRIBUTED_FS_REFRESH_COOKIE_SECURE:-true}
+      DISTRIBUTED_FS_REFRESH_COOKIE_SAME_SITE: ${DISTRIBUTED_FS_REFRESH_COOKIE_SAME_SITE:-Strict}
+      DISTRIBUTED_FS_ACCESS_TOKEN_TTL_SECONDS: ${DISTRIBUTED_FS_ACCESS_TOKEN_TTL_SECONDS:-900}
+      DISTRIBUTED_FS_REFRESH_TOKEN_TTL_SECONDS: ${DISTRIBUTED_FS_REFRESH_TOKEN_TTL_SECONDS:-86400}
+      SUPABASE_DB_JDBC_URL: ${SUPABASE_DB_JDBC_URL}
+      SUPABASE_DB_USERNAME: ${SUPABASE_DB_USERNAME}
+      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD}
+      SUPABASE_DB_SSLMODE: ${SUPABASE_DB_SSLMODE:-require}
+      JAVA_OPTS: ${JAVA_OPTS}
+    volumes:
+      - ./data/chunks:${DISTRIBUTED_FS_STORAGE_ROOT:-/data/chunks}
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      APP_HOSTNAME: ${APP_HOSTNAME}
+      APP_UPSTREAM: api:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
