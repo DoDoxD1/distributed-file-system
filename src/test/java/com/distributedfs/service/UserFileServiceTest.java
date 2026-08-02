@@ -36,9 +36,11 @@ class UserFileServiceTest {
         AuthenticatedUser registeredUser = registrationSession.user();
 
         assertEquals("user@example.com", registeredUser.email());
+        assertEquals(900, registrationSession.accessTokenExpiresAt().getEpochSecond() - registrationSession.issuedAt().getEpochSecond());
+        assertEquals(86_400, registrationSession.refreshTokenExpiresAt().getEpochSecond() - registrationSession.issuedAt().getEpochSecond());
         assertEquals(
             registeredUser,
-            cluster.authenticationService().authenticate(registrationSession.token())
+            cluster.authenticationService().authenticate(registrationSession.accessToken())
         );
 
         AuthenticatedSession loginSession = cluster.authenticationService().login(
@@ -47,14 +49,19 @@ class UserFileServiceTest {
         );
 
         assertEquals(registeredUser.userId(), loginSession.user().userId());
-        assertNotEquals(registrationSession.token(), loginSession.token());
+        assertNotEquals(registrationSession.accessToken(), loginSession.accessToken());
+        assertNotEquals(registrationSession.refreshToken(), loginSession.refreshToken());
         assertEquals(
             loginSession.user(),
-            cluster.authenticationService().authenticate(loginSession.token())
+            cluster.authenticationService().authenticate(loginSession.accessToken())
         );
         assertThrows(
             AuthenticationException.class,
-            () -> cluster.authenticationService().authenticate(registrationSession.token())
+            () -> cluster.authenticationService().authenticate(registrationSession.accessToken())
+        );
+        assertThrows(
+            AuthenticationException.class,
+            () -> cluster.authenticationService().refresh(registrationSession.refreshToken())
         );
         assertThrows(
             AuthenticationException.class,
@@ -63,6 +70,21 @@ class UserFileServiceTest {
         assertThrows(
             UserAlreadyExistsException.class,
             () -> cluster.authenticationService().register("user@example.com", "password123")
+        );
+
+        AuthenticatedSession refreshedSession = cluster.authenticationService().refresh(
+            loginSession.refreshToken()
+        );
+
+        assertNotEquals(loginSession.accessToken(), refreshedSession.accessToken());
+        assertNotEquals(loginSession.refreshToken(), refreshedSession.refreshToken());
+        assertEquals(
+            refreshedSession.user(),
+            cluster.authenticationService().authenticate(refreshedSession.accessToken())
+        );
+        assertThrows(
+            AuthenticationException.class,
+            () -> cluster.authenticationService().refresh(loginSession.refreshToken())
         );
     }
 
@@ -129,7 +151,8 @@ class UserFileServiceTest {
         properties.setReplicationFactor(3);
         properties.setGcRetentionSeconds(0);
         properties.setNodeCount(4);
-        properties.setSessionTtlSeconds(3_600);
+        properties.setAccessTokenTtlSeconds(900);
+        properties.setRefreshTokenTtlSeconds(86_400);
         properties.setStorageRoot(tempDir.resolve("user-storage"));
         properties.setFailureDomains(List.of("rack-a", "rack-b", "rack-c", "rack-d"));
 

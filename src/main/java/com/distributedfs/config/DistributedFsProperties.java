@@ -28,7 +28,21 @@ public class DistributedFsProperties {
     private int nodeCount = 4;
 
     @Min(60)
-    private long sessionTtlSeconds = 604_800;
+    private long accessTokenTtlSeconds = 900;
+
+    @Min(60)
+    private long refreshTokenTtlSeconds = 86_400;
+
+    @NotBlank
+    private String refreshCookieName = "dfs_refresh_token";
+
+    @NotBlank
+    private String refreshCookiePath = "/api/v1/auth";
+
+    private boolean refreshCookieSecure = true;
+
+    @NotBlank
+    private String refreshCookieSameSite = "Strict";
 
     private Path storageRoot = Path.of(".dfs-storage");
 
@@ -72,12 +86,52 @@ public class DistributedFsProperties {
         this.nodeCount = nodeCount;
     }
 
-    public long getSessionTtlSeconds() {
-        return sessionTtlSeconds;
+    public long getAccessTokenTtlSeconds() {
+        return accessTokenTtlSeconds;
     }
 
-    public void setSessionTtlSeconds(long sessionTtlSeconds) {
-        this.sessionTtlSeconds = sessionTtlSeconds;
+    public void setAccessTokenTtlSeconds(long accessTokenTtlSeconds) {
+        this.accessTokenTtlSeconds = accessTokenTtlSeconds;
+    }
+
+    public long getRefreshTokenTtlSeconds() {
+        return refreshTokenTtlSeconds;
+    }
+
+    public void setRefreshTokenTtlSeconds(long refreshTokenTtlSeconds) {
+        this.refreshTokenTtlSeconds = refreshTokenTtlSeconds;
+    }
+
+    public String getRefreshCookieName() {
+        return refreshCookieName;
+    }
+
+    public void setRefreshCookieName(String refreshCookieName) {
+        this.refreshCookieName = refreshCookieName;
+    }
+
+    public String getRefreshCookiePath() {
+        return refreshCookiePath;
+    }
+
+    public void setRefreshCookiePath(String refreshCookiePath) {
+        this.refreshCookiePath = refreshCookiePath;
+    }
+
+    public boolean isRefreshCookieSecure() {
+        return refreshCookieSecure;
+    }
+
+    public void setRefreshCookieSecure(boolean refreshCookieSecure) {
+        this.refreshCookieSecure = refreshCookieSecure;
+    }
+
+    public String getRefreshCookieSameSite() {
+        return refreshCookieSameSite;
+    }
+
+    public void setRefreshCookieSameSite(String refreshCookieSameSite) {
+        this.refreshCookieSameSite = refreshCookieSameSite;
     }
 
     public Path getStorageRoot() {

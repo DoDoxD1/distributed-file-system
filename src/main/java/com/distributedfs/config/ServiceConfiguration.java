@@ -60,7 +60,8 @@ public class ServiceConfiguration {
             jdbcTemplate,
             transactionManager,
             timeProvider,
-            properties.getSessionTtlSeconds()
+            properties.getAccessTokenTtlSeconds(),
+            properties.getRefreshTokenTtlSeconds()
         );
     }
 

@@ -4,7 +4,12 @@ distributed:
     replication-factor: 3
     gc-retention-seconds: 3600
     node-count: 4
-    session-ttl-seconds: 604800
+    access-token-ttl-seconds: 900
+    refresh-token-ttl-seconds: 86400
+    refresh-cookie-name: dfs_refresh_token
+    refresh-cookie-path: /api/v1/auth
+    refresh-cookie-secure: true
+    refresh-cookie-same-site: Strict
     storage-root: .dfs-storage
     failure-domains:
       - rack-a

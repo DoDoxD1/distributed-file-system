@@ -13,7 +13,7 @@ This project demonstrates my approach to designing and delivering robust backend
 - Added rack-aware replica placement and durability checks before publish.
 - Designed maintenance workers for replica scan, under-replication repair, and retention-based
   garbage collection.
-- Added user registration/login plus token-authenticated, per-user file namespaces.
+- Added hybrid auth with short-lived access tokens, secure refresh cookies, and per-user file namespaces.
 - Exposed REST APIs with centralized exception mapping and boundary validation.
 - Added interactive Swagger UI and OpenAPI docs for quick API exploration.
 - Added JUnit tests that exercise gateway and worker behavior through a local in-process cluster.
@@ -57,12 +57,14 @@ This project demonstrates my approach to designing and delivering robust backend
 
 ### 5) Authentication and ownership
 
-- `POST /api/v1/auth/register` creates a user and returns a bearer token.
-- `POST /api/v1/auth/login` rotates to a fresh bearer token for an existing user.
+- `POST /api/v1/auth/register` creates a user, returns a 15-minute bearer access token, and sets a refresh token cookie.
+- `POST /api/v1/auth/login` rotates to a fresh access token plus refresh token cookie for an existing user.
+- `POST /api/v1/auth/refresh` exchanges the refresh cookie for a new access token and rotated refresh cookie.
 - File and worker APIs require `Authorization: Bearer <token>`.
 - Logical file paths are isolated per user, so two users can both store `/docs/report.txt`
   independently.
-- User session lifetime is configurable with `distributed.fs.session-ttl-seconds`.
+- Access tokens live 15 minutes by default and refresh tokens live 24 hours by default.
+- Refresh tokens are issued as `HttpOnly` cookies and default to `Secure` plus `SameSite=Strict`.
 
 ## API summary
 
@@ -70,8 +72,9 @@ Base path: `/api/v1`
 
 ### Auth
 
-- `POST /auth/register` - create a user account and session token
-- `POST /auth/login` - authenticate and rotate to a fresh session token
+- `POST /auth/register` - create a user account, return access token, set refresh cookie
+- `POST /auth/login` - authenticate, return access token, set refresh cookie
+- `POST /auth/refresh` - rotate refresh cookie and return a new access token
 
 ### Files
 
@@ -119,7 +122,12 @@ Supported keys under `distributed.fs`:
 - `replication-factor`
 - `gc-retention-seconds`
 - `node-count`
-- `session-ttl-seconds`
+- `access-token-ttl-seconds`
+- `refresh-token-ttl-seconds`
+- `refresh-cookie-name`
+- `refresh-cookie-path`
+- `refresh-cookie-secure`
+- `refresh-cookie-same-site`
 - `storage-root`
 - `failure-domains`
 
@@ -141,6 +149,10 @@ The existing local overrides remain supported:
 
 For local development, Spring Boot also imports an optional repo-root `.env` file using
 `spring.config.import`, so you can keep secrets outside `application.yml`.
+
+If you run locally over plain HTTP, a browser will not send a `Secure` refresh cookie. The default
+is intentionally secure for production. Override `distributed.fs.refresh-cookie-secure=false` only
+in local development if you need browser-based refresh over HTTP.
 
 ## Run locally
 

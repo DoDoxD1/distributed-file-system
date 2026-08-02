@@ -25,18 +25,21 @@ public class AuthenticationService {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
     private final TimeProvider timeProvider;
-    private final long sessionTtlSeconds;
+    private final long accessTokenTtlSeconds;
+    private final long refreshTokenTtlSeconds;
 
     public AuthenticationService(
         JdbcTemplate jdbcTemplate,
         PlatformTransactionManager transactionManager,
         TimeProvider timeProvider,
-        long sessionTtlSeconds
+        long accessTokenTtlSeconds,
+        long refreshTokenTtlSeconds
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.timeProvider = timeProvider;
-        this.sessionTtlSeconds = sessionTtlSeconds;
+        this.accessTokenTtlSeconds = accessTokenTtlSeconds;
+        this.refreshTokenTtlSeconds = refreshTokenTtlSeconds;
     }
 
     public AuthenticatedSession register(String email, String password) {
@@ -82,7 +85,7 @@ public class AuthenticationService {
     public AuthenticatedUser authenticate(String token) {
         String normalizedToken = normalizeToken(token);
         String tokenHash = PasswordHashingUtil.hashToken(normalizedToken);
-        SessionRow sessionRow = jdbcTemplate.query(
+        AccessSessionRow sessionRow = jdbcTemplate.query(
             """
             select s.user_id, u.email, u.created_at, s.expires_at
             from dfs_user_sessions s
@@ -103,11 +106,51 @@ public class AuthenticationService {
         return new AuthenticatedUser(sessionRow.userId(), sessionRow.email(), sessionRow.createdAt());
     }
 
+    public AuthenticatedSession refresh(String refreshToken) {
+        String normalizedRefreshToken = normalizeToken(refreshToken);
+        String refreshTokenHash = PasswordHashingUtil.hashToken(normalizedRefreshToken);
+        RefreshSessionRow refreshSession = jdbcTemplate.query(
+            """
+            select s.user_id, u.email, u.created_at, s.expires_at
+            from dfs_user_refresh_sessions s
+            join dfs_users u on u.user_id = s.user_id
+            where s.token_hash = ?
+            """,
+            this::mapRefreshSessionRow,
+            refreshTokenHash
+        ).stream().findFirst().orElse(null);
+        if (refreshSession == null) {
+            throw new AuthenticationException("Invalid refresh token");
+        }
+        Instant now = timeProvider.now();
+        if (!refreshSession.expiresAt().isAfter(now)) {
+            transactionTemplate.executeWithoutResult(status -> {
+                jdbcTemplate.update(
+                    "delete from dfs_user_refresh_sessions where token_hash = ?",
+                    refreshTokenHash
+                );
+                jdbcTemplate.update(
+                    "delete from dfs_user_sessions where user_id = ?",
+                    refreshSession.userId()
+                );
+            });
+            throw new AuthenticationException("Refresh token has expired");
+        }
+        return createSession(
+            refreshSession.userId(),
+            refreshSession.email(),
+            refreshSession.createdAt()
+        );
+    }
+
     private AuthenticatedSession createSession(String userId, String email, Instant userCreatedAt) {
         Instant now = normalizeTimestamp(timeProvider.now());
-        Instant expiresAt = normalizeTimestamp(now.plusSeconds(sessionTtlSeconds));
-        String token = generateToken();
-        String tokenHash = PasswordHashingUtil.hashToken(token);
+        Instant accessTokenExpiresAt = normalizeTimestamp(now.plusSeconds(accessTokenTtlSeconds));
+        Instant refreshTokenExpiresAt = normalizeTimestamp(now.plusSeconds(refreshTokenTtlSeconds));
+        String accessToken = generateToken();
+        String refreshToken = generateToken();
+        String accessTokenHash = PasswordHashingUtil.hashToken(accessToken);
+        String refreshTokenHash = PasswordHashingUtil.hashToken(refreshToken);
 
         transactionTemplate.executeWithoutResult(status -> {
             jdbcTemplate.update(
@@ -115,21 +158,38 @@ public class AuthenticationService {
                 userId
             );
             jdbcTemplate.update(
+                "delete from dfs_user_refresh_sessions where user_id = ?",
+                userId
+            );
+            jdbcTemplate.update(
                 """
                 insert into dfs_user_sessions(token_hash, user_id, created_at, expires_at)
                 values (?, ?, ?, ?)
                 """,
-                tokenHash,
+                accessTokenHash,
                 userId,
                 Timestamp.from(now),
-                Timestamp.from(expiresAt)
+                Timestamp.from(accessTokenExpiresAt)
+            );
+            jdbcTemplate.update(
+                """
+                insert into dfs_user_refresh_sessions(token_hash, user_id, created_at, expires_at)
+                values (?, ?, ?, ?)
+                """,
+                refreshTokenHash,
+                userId,
+                Timestamp.from(now),
+                Timestamp.from(refreshTokenExpiresAt)
             );
         });
 
         return new AuthenticatedSession(
-            token,
+            accessToken,
+            accessTokenExpiresAt,
+            refreshToken,
+            refreshTokenExpiresAt,
             new AuthenticatedUser(userId, email, userCreatedAt),
-            expiresAt
+            now
         );
     }
 
@@ -162,8 +222,17 @@ public class AuthenticationService {
         return userRow;
     }
 
-    private SessionRow mapSessionRow(ResultSet resultSet, int rowNum) throws SQLException {
-        return new SessionRow(
+    private AccessSessionRow mapSessionRow(ResultSet resultSet, int rowNum) throws SQLException {
+        return new AccessSessionRow(
+            resultSet.getString("user_id"),
+            resultSet.getString("email"),
+            resultSet.getTimestamp("created_at").toInstant(),
+            resultSet.getTimestamp("expires_at").toInstant()
+        );
+    }
+
+    private RefreshSessionRow mapRefreshSessionRow(ResultSet resultSet, int rowNum) throws SQLException {
+        return new RefreshSessionRow(
             resultSet.getString("user_id"),
             resultSet.getString("email"),
             resultSet.getTimestamp("created_at").toInstant(),
@@ -222,6 +291,9 @@ public class AuthenticationService {
     private record UserRow(String userId, String email, String passwordHash, Instant createdAt) {
     }
 
-    private record SessionRow(String userId, String email, Instant createdAt, Instant expiresAt) {
+    private record AccessSessionRow(String userId, String email, Instant createdAt, Instant expiresAt) {
+    }
+
+    private record RefreshSessionRow(String userId, String email, Instant createdAt, Instant expiresAt) {
     }
 }

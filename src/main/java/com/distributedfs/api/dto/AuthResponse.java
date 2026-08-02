@@ -11,8 +11,8 @@ public record AuthResponse(
 
     public static AuthResponse fromSession(AuthenticatedSession session) {
         return new AuthResponse(
-            session.token(),
-            session.expiresAt(),
+            session.accessToken(),
+            session.accessTokenExpiresAt(),
             UserResponse.fromUser(session.user())
         );
     }

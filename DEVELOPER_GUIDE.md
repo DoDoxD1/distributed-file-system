@@ -57,10 +57,12 @@ The implementation preserves control-plane/data-plane separation:
 
 ### Authentication
 
-1. `AuthenticationService.register()` validates and normalizes credentials, persists the user, reloads the stored row, and issues a session token.
-2. `AuthenticationService.login()` verifies the PBKDF2 password hash and rotates to a fresh single active session.
-3. `AuthenticationInterceptor` hashes bearer tokens, resolves the active session, and stores the authenticated user on the request.
-4. Expired session tokens are removed eagerly during authentication.
+1. `AuthenticationService.register()` validates and normalizes credentials, persists the user, reloads the stored row, and issues both an access token and refresh token.
+2. `AuthenticationService.login()` verifies the PBKDF2 password hash and rotates to a fresh access token plus refresh token pair.
+3. `AuthController` returns the access token in JSON and writes the refresh token as an `HttpOnly` cookie.
+4. `AuthenticationService.refresh()` validates the refresh token, rotates both tokens, and invalidates the previous refresh token.
+5. `AuthenticationInterceptor` hashes bearer access tokens, resolves the active access session, and stores the authenticated user on the request.
+6. Expired access or refresh tokens are removed eagerly during authentication/refresh.
 
 ### Download
 
@@ -102,7 +104,7 @@ Per repository policy, runtime-overridable values are centralized.
 | Config module/file | Purpose | Runtime keys |
 | --- | --- | --- |
 | `src/main/resources/application.yml` | Default distributed FS runtime values and optional local secret import | `distributed.fs.*`, `spring.config.import` |
-| `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.session-ttl-seconds`, `distributed.fs.storage-root`, `distributed.fs.failure-domains` |
+| `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.access-token-ttl-seconds`, `distributed.fs.refresh-token-ttl-seconds`, `distributed.fs.refresh-cookie-name`, `distributed.fs.refresh-cookie-path`, `distributed.fs.refresh-cookie-secure`, `distributed.fs.refresh-cookie-same-site`, `distributed.fs.storage-root`, `distributed.fs.failure-domains` |
 | `src/main/resources/application.yml` | Metadata datasource and pool configuration | `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password`, `spring.datasource.driver-class-name`, `spring.datasource.hikari.maximum-pool-size`, `spring.datasource.hikari.connection-timeout`, `spring.datasource.hikari.data-source-properties.sslmode` |
 | `src/main/resources/application.yml` | Flyway migration configuration | `spring.flyway.enabled`, `spring.flyway.locations` |
 | `src/main/resources/application.yml` | Swagger/OpenAPI endpoint configuration | `springdoc.api-docs.path`, `springdoc.swagger-ui.path`, `springdoc.swagger-ui.operations-sorter`, `springdoc.swagger-ui.tags-sorter`, `springdoc.swagger-ui.display-request-duration` |
@@ -132,10 +134,16 @@ Fallback local metadata environment variables remain supported:
 
 - `POST /api/v1/auth/register`
   - request: email, password
-  - response: bearer token, expiry, authenticated user
+  - response: 15-minute bearer access token, expiry, authenticated user
+  - side effect: sets rotated refresh token cookie
 - `POST /api/v1/auth/login`
   - request: email, password
-  - response: fresh bearer token, expiry, authenticated user
+  - response: fresh bearer access token, expiry, authenticated user
+  - side effect: sets rotated refresh token cookie
+- `POST /api/v1/auth/refresh`
+  - request: refresh token cookie
+  - response: fresh bearer access token, expiry, authenticated user
+  - side effect: rotates refresh token cookie
 
 ### File API (`/api/v1/files`)
 
@@ -179,8 +187,10 @@ Current tests validate behavior changes requested in `plan.md`:
   - upload/download/version/list/delete/idempotency flows
   - metadata persistence across cluster rebuilds
 - `UserFileServiceTest`
-  - registration/login/session rotation behavior
+  - registration/login/access-token plus refresh-token rotation behavior
   - per-user namespace isolation for identical public logical paths
+- `AuthControllerIntegrationTest`
+  - secure refresh-cookie issuance and refresh rotation over the real HTTP path
 - `BackgroundWorkerServiceTest`
   - replica scan+repair lifecycle
   - retention-based garbage collection

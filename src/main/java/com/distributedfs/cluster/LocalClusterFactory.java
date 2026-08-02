@@ -88,7 +88,8 @@ public final class LocalClusterFactory {
             jdbcTemplate,
             transactionManager,
             timeProvider,
-            properties.getSessionTtlSeconds()
+            properties.getAccessTokenTtlSeconds(),
+            properties.getRefreshTokenTtlSeconds()
         );
         RackAwarePlacementStrategy placementStrategy = new RackAwarePlacementStrategy();
         GatewayService gatewayService = new GatewayService(
