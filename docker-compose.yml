@@ -22,6 +22,8 @@ services:
       - type: bind
         source: ${DISTRIBUTED_FS_STORAGE_HOST_PATH:-./data/chunks}
         target: ${DISTRIBUTED_FS_STORAGE_ROOT:-/data/chunks}
+    ports:
+      - "8080:8080"
     expose:
       - "8080"
 
