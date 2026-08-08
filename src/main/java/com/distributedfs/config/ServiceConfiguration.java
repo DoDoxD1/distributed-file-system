@@ -5,6 +5,7 @@ import com.distributedfs.service.AuthenticationService;
 import com.distributedfs.service.BackgroundWorkerService;
 import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.MetadataService;
+import com.distributedfs.service.OperationalStatusService;
 import com.distributedfs.service.StorageNode;
 import com.distributedfs.service.UserFileService;
 import com.distributedfs.util.TimeProvider;
@@ -17,7 +18,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -68,6 +72,28 @@ public class ServiceConfiguration {
     @Bean
     public TimeProvider timeProvider() {
         return Instant::now;
+    }
+
+    @Bean
+    public OperationalStatusService operationalStatusService(
+        JdbcTemplate jdbcTemplate,
+        TimeProvider timeProvider,
+        ObjectProvider<BuildProperties> buildPropertiesProvider,
+        @Value("${spring.application.name}") String applicationName
+    ) {
+        BuildProperties buildProperties = buildPropertiesProvider.getIfAvailable();
+        String applicationVersion = buildProperties != null
+            ? buildProperties.getVersion()
+            : ServiceConfiguration.class.getPackage().getImplementationVersion();
+        if (applicationVersion == null || applicationVersion.isBlank()) {
+            applicationVersion = "dev";
+        }
+        return new OperationalStatusService(
+            jdbcTemplate,
+            timeProvider,
+            applicationName,
+            applicationVersion
+        );
     }
 
     @Bean
