@@ -14,7 +14,7 @@
 
     <groupId>com.distributedfs</groupId>
     <artifactId>distributed-file-storage-system</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <name>distributed-file-storage-system</name>
     <description>Distributed file storage system MVP</description>
 

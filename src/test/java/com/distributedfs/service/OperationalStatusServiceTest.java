@@ -29,7 +29,7 @@ class OperationalStatusServiceTest {
             jdbcTemplate,
             timeProvider,
             "distributed-file-storage-system",
-            "0.1.0"
+            "0.2"
         );
 
         SystemHealth health = service.health();
@@ -51,7 +51,7 @@ class OperationalStatusServiceTest {
             jdbcTemplate,
             timeProvider,
             "distributed-file-storage-system",
-            "0.1.0"
+            "0.2"
         );
 
         ServiceUnavailableException error = assertThrows(
@@ -70,12 +70,12 @@ class OperationalStatusServiceTest {
             jdbcTemplate,
             timeProvider,
             "distributed-file-storage-system",
-            "0.1.0"
+            "0.2"
         );
 
         ApplicationVersionInfo version = service.version();
 
         assertEquals("distributed-file-storage-system", version.application());
-        assertEquals("0.1.0", version.version());
+        assertEquals("0.2", version.version());
     }
 }
