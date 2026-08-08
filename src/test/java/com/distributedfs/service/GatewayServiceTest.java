@@ -10,6 +10,7 @@ import com.distributedfs.cluster.LocalCluster;
 import com.distributedfs.cluster.LocalClusterFactory;
 import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.error.LogicalFileNotFoundException;
+import com.distributedfs.error.PayloadTooLargeException;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
 import java.nio.file.Path;
@@ -122,6 +123,28 @@ class GatewayServiceTest {
         assertArrayEquals(
             payload,
             cluster.gatewayService().downloadFile("/docs/repeated-chunks.txt", null)
+        );
+    }
+
+    @Test
+    void uploadRejectsPayloadLargerThanConfiguredMaxFileSize() {
+        LocalCluster cluster = buildCluster(
+            4,
+            2,
+            0,
+            3,
+            List.of("rack-a", "rack-b", "rack-c")
+        );
+        cluster.properties().setMaxFileSizeBytes(3);
+
+        PayloadTooLargeException error = assertThrows(
+            PayloadTooLargeException.class,
+            () -> cluster.gatewayService().uploadFile("/docs/large.bin", "four".getBytes(), null)
+        );
+
+        assertEquals(
+            "Upload payload exceeds maximum allowed size: 4 > 3",
+            error.getMessage()
         );
     }
 

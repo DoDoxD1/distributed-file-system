@@ -6,6 +6,7 @@ import com.distributedfs.error.ChunkIntegrityException;
 import com.distributedfs.error.DistributedFsException;
 import com.distributedfs.error.DurabilityException;
 import com.distributedfs.error.LogicalFileNotFoundException;
+import com.distributedfs.error.PayloadTooLargeException;
 import com.distributedfs.error.ReplicaUnavailableException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.model.ChunkRecord;
@@ -95,6 +96,7 @@ public class GatewayService {
     public FileManifest uploadFile(String logicalPath, byte[] payload, String idempotencyKey) {
         String normalizedPath = normalizeLogicalPath(logicalPath);
         byte[] normalizedPayload = normalizePayload(payload);
+        validatePayloadSize(normalizedPayload);
         String normalizedIdempotencyKey = normalizeNullableNonBlank(
             idempotencyKey,
             "idempotencyKey"
@@ -381,6 +383,16 @@ public class GatewayService {
             throw new ValidationException("payload must be non-null");
         }
         return payload;
+    }
+
+    private void validatePayloadSize(byte[] payload) {
+        long maxFileSizeBytes = properties.getMaxFileSizeBytes();
+        if (payload.length > maxFileSizeBytes) {
+            throw new PayloadTooLargeException(
+                "Upload payload exceeds maximum allowed size: "
+                    + payload.length + " > " + maxFileSizeBytes
+            );
+        }
     }
 
     private static String normalizeNullable(String value) {

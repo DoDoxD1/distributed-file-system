@@ -8,6 +8,7 @@ import com.distributedfs.service.MetadataService;
 import com.distributedfs.service.OperationalStatusService;
 import com.distributedfs.service.StorageNode;
 import com.distributedfs.service.UserFileService;
+import com.distributedfs.service.UserStorageQuotaService;
 import com.distributedfs.util.TimeProvider;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
@@ -140,8 +141,25 @@ public class ServiceConfiguration {
     }
 
     @Bean
-    public UserFileService userFileService(GatewayService gatewayService) {
-        return new UserFileService(gatewayService);
+    public UserStorageQuotaService userStorageQuotaService(
+        GatewayService gatewayService,
+        MetadataService metadataService,
+        PlatformTransactionManager transactionManager
+    ) {
+        return new UserStorageQuotaService(
+            gatewayService,
+            metadataService,
+            transactionManager,
+            properties
+        );
+    }
+
+    @Bean
+    public UserFileService userFileService(
+        GatewayService gatewayService,
+        UserStorageQuotaService userStorageQuotaService
+    ) {
+        return new UserFileService(gatewayService, userStorageQuotaService);
     }
 
     @Bean

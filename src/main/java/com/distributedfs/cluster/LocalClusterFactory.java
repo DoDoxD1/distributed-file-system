@@ -1,4 +1,4 @@
-package com.distributedfs.cluster;
+5package com.distributedfs.cluster;
 
 import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.placement.RackAwarePlacementStrategy;
@@ -8,6 +8,7 @@ import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.MetadataService;
 import com.distributedfs.service.StorageNode;
 import com.distributedfs.service.UserFileService;
+import com.distributedfs.service.UserStorageQuotaService;
 import com.distributedfs.util.TimeProvider;
 import org.flywaydb.core.Flyway;
 import java.io.IOException;
@@ -98,7 +99,16 @@ public final class LocalClusterFactory {
             placementStrategy,
             properties
         );
-        UserFileService userFileService = new UserFileService(gatewayService);
+        UserStorageQuotaService userStorageQuotaService = new UserStorageQuotaService(
+            gatewayService,
+            metadataService,
+            transactionManager,
+            properties
+        );
+        UserFileService userFileService = new UserFileService(
+            gatewayService,
+            userStorageQuotaService
+        );
         BackgroundWorkerService workerService = new BackgroundWorkerService(
             metadataService,
             nodeMap,

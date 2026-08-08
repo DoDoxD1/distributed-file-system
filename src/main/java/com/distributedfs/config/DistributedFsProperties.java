@@ -27,6 +27,12 @@ public class DistributedFsProperties {
     @Min(1)
     private int nodeCount = 4;
 
+    @Min(1)
+    private long maxFileSizeBytes = 26_214_400;
+
+    @Min(1)
+    private long maxUserStorageBytes = 1_073_741_824;
+
     @Min(60)
     private long accessTokenTtlSeconds = 900;
 
@@ -84,6 +90,22 @@ public class DistributedFsProperties {
 
     public void setNodeCount(int nodeCount) {
         this.nodeCount = nodeCount;
+    }
+
+    public long getMaxFileSizeBytes() {
+        return maxFileSizeBytes;
+    }
+
+    public void setMaxFileSizeBytes(long maxFileSizeBytes) {
+        this.maxFileSizeBytes = maxFileSizeBytes;
+    }
+
+    public long getMaxUserStorageBytes() {
+        return maxUserStorageBytes;
+    }
+
+    public void setMaxUserStorageBytes(long maxUserStorageBytes) {
+        this.maxUserStorageBytes = maxUserStorageBytes;
     }
 
     public long getAccessTokenTtlSeconds() {
@@ -159,6 +181,12 @@ public class DistributedFsProperties {
         }
         if (storageRoot == null) {
             throw new IllegalArgumentException("storageRoot must be non-null");
+        }
+        if (maxFileSizeBytes > maxUserStorageBytes) {
+            throw new IllegalArgumentException(
+                "maxFileSizeBytes cannot exceed maxUserStorageBytes: "
+                    + maxFileSizeBytes + " > " + maxUserStorageBytes
+            );
         }
         if (failureDomains == null || failureDomains.isEmpty()) {
             throw new IllegalArgumentException("failureDomains must include at least one domain");

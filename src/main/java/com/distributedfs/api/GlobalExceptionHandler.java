@@ -6,7 +6,9 @@ import com.distributedfs.error.AuthorizationException;
 import com.distributedfs.error.ChunkNotFoundException;
 import com.distributedfs.error.DistributedFsException;
 import com.distributedfs.error.LogicalFileNotFoundException;
+import com.distributedfs.error.PayloadTooLargeException;
 import com.distributedfs.error.ServiceUnavailableException;
+import com.distributedfs.error.StorageQuotaExceededException;
 import com.distributedfs.error.UserAlreadyExistsException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.error.VersionDeletedException;
@@ -79,6 +81,22 @@ public class GlobalExceptionHandler {
         HttpServletRequest request
     ) {
         return buildResponse(HttpStatus.CONFLICT, "user_exists", error, request);
+    }
+
+    @ExceptionHandler(PayloadTooLargeException.class)
+    public ResponseEntity<ErrorResponse> handlePayloadTooLargeException(
+        PayloadTooLargeException error,
+        HttpServletRequest request
+    ) {
+        return buildResponse(HttpStatus.PAYLOAD_TOO_LARGE, "payload_too_large", error, request);
+    }
+
+    @ExceptionHandler(StorageQuotaExceededException.class)
+    public ResponseEntity<ErrorResponse> handleStorageQuotaExceededException(
+        StorageQuotaExceededException error,
+        HttpServletRequest request
+    ) {
+        return buildResponse(HttpStatus.CONFLICT, "storage_quota_exceeded", error, request);
     }
 
     @ExceptionHandler(ServiceUnavailableException.class)

@@ -4,6 +4,8 @@ distributed:
     replication-factor: 3
     gc-retention-seconds: 3600
     node-count: 4
+    max-file-size-bytes: 26214400
+    max-user-storage-bytes: 1073741824
     access-token-ttl-seconds: 900
     refresh-token-ttl-seconds: 86400
     refresh-cookie-name: dfs_refresh_token

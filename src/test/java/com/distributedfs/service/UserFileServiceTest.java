@@ -10,6 +10,7 @@ import com.distributedfs.cluster.LocalCluster;
 import com.distributedfs.cluster.LocalClusterFactory;
 import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.error.AuthenticationException;
+import com.distributedfs.error.StorageQuotaExceededException;
 import com.distributedfs.error.UserAlreadyExistsException;
 import com.distributedfs.model.AuthenticatedSession;
 import com.distributedfs.model.AuthenticatedUser;
@@ -143,6 +144,81 @@ class UserFileServiceTest {
         assertEquals(List.of(secondManifest.versionId()), secondVersions.stream().map(FileManifest::versionId).toList());
         assertTrue(firstVersions.stream().allMatch(manifest -> firstUser.userId().equals(manifest.ownerUserId())));
         assertTrue(secondVersions.stream().allMatch(manifest -> secondUser.userId().equals(manifest.ownerUserId())));
+    }
+
+    @Test
+    void uploadRejectsWhenActiveVersionsWouldExceedUserQuota() {
+        LocalCluster cluster = buildCluster();
+        cluster.properties().setMaxUserStorageBytes(10);
+        AuthenticatedUser user = cluster.authenticationService().register(
+            "quota@example.com",
+            "password123"
+        ).user();
+
+        cluster.userFileService().uploadFile(user, "/docs/first.txt", "12345".getBytes(), null);
+
+        StorageQuotaExceededException error = assertThrows(
+            StorageQuotaExceededException.class,
+            () -> cluster.userFileService().uploadFile(user, "/docs/second.txt", "678901".getBytes(), null)
+        );
+
+        assertEquals(
+            "Upload would exceed storage quota for user " + user.userId() + ": 11 > 10",
+            error.getMessage()
+        );
+    }
+
+    @Test
+    void deletingActiveVersionFreesQuotaForLaterUpload() {
+        LocalCluster cluster = buildCluster();
+        cluster.properties().setMaxUserStorageBytes(10);
+        AuthenticatedUser user = cluster.authenticationService().register(
+            "delete-quota@example.com",
+            "password123"
+        ).user();
+
+        cluster.userFileService().uploadFile(user, "/docs/first.txt", "12345".getBytes(), null);
+        cluster.userFileService().deleteFile(user, "/docs/first.txt", null);
+
+        FileManifest manifest = cluster.userFileService().uploadFile(
+            user,
+            "/docs/second.txt",
+            "678901".getBytes(),
+            null
+        );
+
+        assertEquals("/docs/second.txt", manifest.logicalPath());
+        assertEquals(6, manifest.sizeBytes());
+    }
+
+    @Test
+    void idempotentReplayReturnsCommittedManifestEvenWhenQuotaIsNowFull() {
+        LocalCluster cluster = buildCluster();
+        cluster.properties().setMaxUserStorageBytes(5);
+        AuthenticatedUser user = cluster.authenticationService().register(
+            "idempotent@example.com",
+            "password123"
+        ).user();
+
+        FileManifest firstManifest = cluster.userFileService().uploadFile(
+            user,
+            "/docs/request.txt",
+            "12345".getBytes(),
+            "request-123"
+        );
+
+        FileManifest replayedManifest = cluster.userFileService().uploadFile(
+            user,
+            "/docs/request.txt",
+            "abcde".getBytes(),
+            "request-123"
+        );
+
+        assertEquals(firstManifest.versionId(), replayedManifest.versionId());
+        assertArrayEquals(
+            "12345".getBytes(),
+            cluster.userFileService().downloadFile(user, "/docs/request.txt", null)
+        );
     }
 
     private LocalCluster buildCluster() {

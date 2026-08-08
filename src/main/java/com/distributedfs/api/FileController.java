@@ -6,7 +6,10 @@ import com.distributedfs.api.dto.FileListingResponse;
 import com.distributedfs.api.dto.FileManifestResponse;
 import com.distributedfs.api.dto.UploadFileRequest;
 import com.distributedfs.api.dto.UploadFileResponse;
+import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.config.OpenApiConfiguration;
+import com.distributedfs.error.PayloadTooLargeException;
+import com.distributedfs.error.ValidationException;
 import com.distributedfs.model.AuthenticatedUser;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
@@ -36,9 +39,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class FileController {
 
     private final UserFileService userFileService;
+    private final DistributedFsProperties properties;
 
-    public FileController(UserFileService userFileService) {
+    public FileController(
+        UserFileService userFileService,
+        DistributedFsProperties properties
+    ) {
         this.userFileService = userFileService;
+        this.properties = properties;
     }
 
     @PostMapping(
@@ -50,6 +58,7 @@ public class FileController {
         HttpServletRequest httpRequest
     ) {
         AuthenticatedUser user = RequestUserContext.requireAuthenticatedUser(httpRequest);
+        validateDecodedPayloadSize(request.payloadBase64());
         byte[] payload = Base64.getDecoder().decode(request.payloadBase64());
         FileManifest manifest = userFileService.uploadFile(
             user,
@@ -123,5 +132,30 @@ public class FileController {
         return userFileService.listVersions(user, logicalPath).stream()
             .map(FileManifestResponse::fromManifest)
             .toList();
+    }
+
+    private void validateDecodedPayloadSize(String payloadBase64) {
+        if (payloadBase64 == null || payloadBase64.isBlank()) {
+            throw new ValidationException("payloadBase64 must be non-empty");
+        }
+        String normalizedPayloadBase64 = payloadBase64.strip();
+        int paddingLength = 0;
+        if (normalizedPayloadBase64.endsWith("==")) {
+            paddingLength = 2;
+        } else if (normalizedPayloadBase64.endsWith("=")) {
+            paddingLength = 1;
+        }
+        long estimatedDecodedSize = ((long) normalizedPayloadBase64.length() * 3 / 4)
+            - paddingLength;
+        if (estimatedDecodedSize < 0) {
+            estimatedDecodedSize = 0;
+        }
+        long maxFileSizeBytes = properties.getMaxFileSizeBytes();
+        if (estimatedDecodedSize > maxFileSizeBytes) {
+            throw new PayloadTooLargeException(
+                "Upload payload exceeds maximum allowed size: "
+                    + estimatedDecodedSize + " > " + maxFileSizeBytes
+            );
+        }
     }
 }

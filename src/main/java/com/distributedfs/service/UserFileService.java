@@ -9,9 +9,14 @@ import java.util.List;
 public class UserFileService {
 
     private final GatewayService gatewayService;
+    private final UserStorageQuotaService userStorageQuotaService;
 
-    public UserFileService(GatewayService gatewayService) {
+    public UserFileService(
+        GatewayService gatewayService,
+        UserStorageQuotaService userStorageQuotaService
+    ) {
         this.gatewayService = gatewayService;
+        this.userStorageQuotaService = userStorageQuotaService;
     }
 
     public FileManifest uploadFile(
@@ -22,8 +27,9 @@ public class UserFileService {
     ) {
         return toPublicManifest(
             user.userId(),
-            gatewayService.uploadFile(
-                LogicalPathUtil.toScopedPath(user.userId(), logicalPath),
+            userStorageQuotaService.uploadFileWithinQuota(
+                user.userId(),
+                logicalPath,
                 payload,
                 idempotencyKey
             )

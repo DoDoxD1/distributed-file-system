@@ -338,6 +338,39 @@ public class MetadataService {
         return filteredListings;
     }
 
+    public long getActiveStorageBytesForUser(String userId) {
+        String normalizedUserId = requireNonBlank(userId, "userId");
+        String userNamespaceRoot = "/__users/" + normalizedUserId;
+        Long activeStorageBytes = querySingleValue(
+            """
+            select coalesce(sum(v.size_bytes), 0)
+            from dfs_file_versions v
+            join dfs_files f on f.file_id = v.file_id
+            where v.deleted_at is null
+                and (
+                    f.logical_path = ?
+                    or f.logical_path like ?
+                )
+            """,
+            Long.class,
+            userNamespaceRoot,
+            userNamespaceRoot + "/%"
+        );
+        return activeStorageBytes == null ? 0L : activeStorageBytes;
+    }
+
+    public void lockUserRow(String userId) {
+        String normalizedUserId = requireNonBlank(userId, "userId");
+        String lockedUserId = querySingleValue(
+            "select user_id from dfs_users where user_id = ? for update",
+            String.class,
+            normalizedUserId
+        );
+        if (lockedUserId == null) {
+            throw new ValidationException("Unknown userId: " + normalizedUserId);
+        }
+    }
+
     /**
      * Marks a version as deleted and releases chunk references.
      *
