@@ -68,6 +68,9 @@ This project demonstrates my approach to designing and delivering robust backend
 
 ## API summary
 
+Deployed base URL: `https://dfs-api.duckdns.org`
+Swagger UI: `https://dfs-api.duckdns.org/swagger-ui.html`
+
 Base path: `/api/v1`
 
 ### Auth

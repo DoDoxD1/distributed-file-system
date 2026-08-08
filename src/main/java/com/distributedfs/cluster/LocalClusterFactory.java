@@ -1,4 +1,4 @@
-5package com.distributedfs.cluster;
+package com.distributedfs.cluster;
 
 import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.placement.RackAwarePlacementStrategy;
