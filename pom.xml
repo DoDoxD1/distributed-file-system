@@ -20,6 +20,7 @@
 
     <properties>
         <java.version>21</java.version>
+        <oci.sdk.version>3.61.0</oci.sdk.version>
     </properties>
 
     <dependencies>
@@ -51,6 +52,16 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.oracle.oci.sdk</groupId>
+            <artifactId>oci-java-sdk-common-httpclient-jersey3</artifactId>
+            <version>${oci.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.oracle.oci.sdk</groupId>
+            <artifactId>oci-java-sdk-objectstorage</artifactId>
+            <version>${oci.sdk.version}</version>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>

@@ -5,7 +5,11 @@ import com.distributedfs.placement.RackAwarePlacementStrategy;
 import com.distributedfs.service.AuthenticationService;
 import com.distributedfs.service.BackgroundWorkerService;
 import com.distributedfs.service.GatewayService;
+import com.distributedfs.service.LocalStorageNode;
 import com.distributedfs.service.MetadataService;
+import com.distributedfs.service.OciOracleObjectStorageBucketClient;
+import com.distributedfs.service.OracleObjectStorageBucketClient;
+import com.distributedfs.service.OracleObjectStorageNode;
 import com.distributedfs.service.StorageNode;
 import com.distributedfs.service.UserFileService;
 import com.distributedfs.service.UserStorageQuotaService;
@@ -49,13 +53,27 @@ public final class LocalClusterFactory {
         }
 
         List<StorageNode> nodeList = new ArrayList<>();
+        String storageBackend = properties.getStorageBackend().strip().toLowerCase();
+        OracleObjectStorageBucketClient bucketClient = null;
+        if (DistributedFsProperties.STORAGE_BACKEND_ORACLE_OBJECT_STORAGE.equals(storageBackend)) {
+            bucketClient = new OciOracleObjectStorageBucketClient(properties.getOracleObjectStorage());
+        }
         for (int index = 0; index < properties.getNodeCount(); index++) {
             String nodeId = "node-" + (index + 1);
             String failureDomain = properties.getFailureDomains().get(
                 index % properties.getFailureDomains().size()
             );
-            Path nodeDirectory = storageRoot.resolve(nodeId);
-            nodeList.add(new StorageNode(nodeId, failureDomain, nodeDirectory));
+            if (DistributedFsProperties.STORAGE_BACKEND_LOCAL.equals(storageBackend)) {
+                Path nodeDirectory = storageRoot.resolve(nodeId);
+                nodeList.add(new LocalStorageNode(nodeId, failureDomain, nodeDirectory));
+            } else {
+                nodeList.add(new OracleObjectStorageNode(
+                    nodeId,
+                    failureDomain,
+                    bucketClient,
+                    properties.getOracleObjectStorage().getObjectPrefix()
+                ));
+            }
         }
 
         Map<String, StorageNode> nodeMap = new LinkedHashMap<>();

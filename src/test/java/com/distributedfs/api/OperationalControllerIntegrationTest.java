@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
     "spring.datasource.driver-class-name=org.h2.Driver",
     "spring.datasource.username=sa",
     "spring.datasource.password=",
+    "distributed.fs.storage-backend=local",
     "distributed.fs.storage-root=target/operational-controller-test-storage"
 })
 class OperationalControllerIntegrationTest {

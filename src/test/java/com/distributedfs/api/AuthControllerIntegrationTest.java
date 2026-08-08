@@ -26,6 +26,7 @@ import org.springframework.test.web.servlet.MvcResult;
     "spring.datasource.driver-class-name=org.h2.Driver",
     "spring.datasource.username=sa",
     "spring.datasource.password=",
+    "distributed.fs.storage-backend=local",
     "distributed.fs.storage-root=target/auth-controller-test-storage",
     "distributed.fs.access-token-ttl-seconds=900",
     "distributed.fs.refresh-token-ttl-seconds=86400",

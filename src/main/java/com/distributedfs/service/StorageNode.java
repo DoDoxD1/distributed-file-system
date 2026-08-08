@@ -2,50 +2,30 @@ package com.distributedfs.service;
 
 import com.distributedfs.error.ChunkIntegrityException;
 import com.distributedfs.error.ChunkNotFoundException;
-import com.distributedfs.error.DistributedFsException;
 import com.distributedfs.error.NodeUnavailableException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.util.HashingUtil;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Stream;
 
 /**
- * Local filesystem-backed storage node for immutable chunk replicas.
+ * Storage node for immutable chunk replicas.
  */
-public class StorageNode {
+public abstract class StorageNode {
 
     private final String nodeId;
     private final String failureDomain;
-    private final Path storageDirectory;
     private volatile boolean healthy;
 
     /**
-     * Creates one local storage node.
+     * Creates one storage node.
      *
      * @param nodeId stable node identifier
      * @param failureDomain domain used for replica placement
-     * @param storageDirectory local root directory for this node
      */
-    public StorageNode(String nodeId, String failureDomain, Path storageDirectory) {
+    protected StorageNode(String nodeId, String failureDomain) {
         this.nodeId = validateNodeId(nodeId);
         this.failureDomain = validateFailureDomain(failureDomain);
-        this.storageDirectory = validateStorageDirectory(storageDirectory);
         this.healthy = true;
-
-        try {
-            Files.createDirectories(storageDirectory);
-            Files.createDirectories(chunkDirectory());
-        } catch (IOException error) {
-            throw new DistributedFsException(
-                "Failed to initialize storage directories for node " + nodeId,
-                error
-            );
-        }
     }
 
     public String nodeId() {
@@ -88,8 +68,7 @@ public class StorageNode {
             );
         }
 
-        Path chunkPath = chunkPath(normalizedChunkId);
-        if (Files.exists(chunkPath)) {
+        if (hasChunkInternal(normalizedChunkId)) {
             byte[] existingPayload = readChunk(normalizedChunkId);
             String existingChecksum = HashingUtil.sha256Hex(existingPayload);
             if (!existingChecksum.equals(expectedChecksum)) {
@@ -102,14 +81,7 @@ public class StorageNode {
             return;
         }
 
-        try {
-            Files.write(chunkPath, payload);
-        } catch (IOException error) {
-            throw new DistributedFsException(
-                "Failed to persist chunk " + normalizedChunkId + " on node " + nodeId,
-                error
-            );
-        }
+        writeChunkInternal(normalizedChunkId, payload);
     }
 
     /**
@@ -122,21 +94,13 @@ public class StorageNode {
         ensureAvailable("read");
         String normalizedChunkId = validateChunkId(chunkId);
 
-        Path chunkPath = chunkPath(normalizedChunkId);
-        if (!Files.exists(chunkPath)) {
+        if (!hasChunkInternal(normalizedChunkId)) {
             throw new ChunkNotFoundException(
                 "Chunk " + normalizedChunkId + " does not exist on node " + nodeId
             );
         }
 
-        try {
-            return Files.readAllBytes(chunkPath);
-        } catch (IOException error) {
-            throw new DistributedFsException(
-                "Failed to read chunk " + normalizedChunkId + " from node " + nodeId,
-                error
-            );
-        }
+        return readChunkInternal(normalizedChunkId);
     }
 
     /**
@@ -147,7 +111,7 @@ public class StorageNode {
      */
     public synchronized boolean hasChunk(String chunkId) {
         String normalizedChunkId = validateChunkId(chunkId);
-        return Files.exists(chunkPath(normalizedChunkId));
+        return hasChunkInternal(normalizedChunkId);
     }
 
     /**
@@ -159,19 +123,11 @@ public class StorageNode {
         ensureAvailable("delete");
         String normalizedChunkId = validateChunkId(chunkId);
 
-        Path chunkPath = chunkPath(normalizedChunkId);
-        if (!Files.exists(chunkPath)) {
+        if (!hasChunkInternal(normalizedChunkId)) {
             return;
         }
 
-        try {
-            Files.delete(chunkPath);
-        } catch (IOException error) {
-            throw new DistributedFsException(
-                "Failed to delete chunk " + normalizedChunkId + " from node " + nodeId,
-                error
-            );
-        }
+        deleteChunkInternal(normalizedChunkId);
     }
 
     /**
@@ -180,38 +136,15 @@ public class StorageNode {
      * @return sorted chunk identifiers
      */
     public synchronized List<String> listChunks() {
-        try (Stream<Path> pathStream = Files.list(chunkDirectory())) {
-            List<String> chunkIds = new ArrayList<>();
-            pathStream
-                .filter(path -> path.getFileName().toString().endsWith(".chunk"))
-                .forEach(path -> {
-                    String fileName = path.getFileName().toString();
-                    chunkIds.add(fileName.substring(0, fileName.length() - 6));
-                });
-            chunkIds.sort(Comparator.naturalOrder());
-            return chunkIds;
-        } catch (IOException error) {
-            throw new DistributedFsException(
-                "Failed to list chunks on node " + nodeId,
-                error
-            );
-        }
+        return listChunksInternal();
     }
 
-    private void ensureAvailable(String operation) {
+    protected final void ensureAvailable(String operation) {
         if (!healthy) {
             throw new NodeUnavailableException(
                 "Node " + nodeId + " is unavailable for operation " + operation
             );
         }
-    }
-
-    private Path chunkDirectory() {
-        return storageDirectory.resolve("chunks");
-    }
-
-    private Path chunkPath(String chunkId) {
-        return chunkDirectory().resolve(chunkId + ".chunk");
     }
 
     private static String validateNodeId(String nodeId) {
@@ -228,14 +161,7 @@ public class StorageNode {
         return failureDomain;
     }
 
-    private static Path validateStorageDirectory(Path storageDirectory) {
-        if (storageDirectory == null) {
-            throw new ValidationException("storageDirectory must be non-null");
-        }
-        return storageDirectory;
-    }
-
-    private static String validateChunkId(String chunkId) {
+    protected static String validateChunkId(String chunkId) {
         if (chunkId == null || chunkId.isBlank()) {
             throw new ValidationException("chunkId must be non-empty");
         }
@@ -245,9 +171,19 @@ public class StorageNode {
         return chunkId;
     }
 
-    private static void validatePayload(byte[] payload) {
+    protected static void validatePayload(byte[] payload) {
         if (payload == null) {
             throw new ValidationException("payload must be non-null");
         }
     }
+
+    protected abstract boolean hasChunkInternal(String chunkId);
+
+    protected abstract void writeChunkInternal(String chunkId, byte[] payload);
+
+    protected abstract byte[] readChunkInternal(String chunkId);
+
+    protected abstract void deleteChunkInternal(String chunkId);
+
+    protected abstract List<String> listChunksInternal();
 }

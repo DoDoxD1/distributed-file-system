@@ -4,6 +4,7 @@ distributed:
     replication-factor: 3
     gc-retention-seconds: 3600
     node-count: 4
+    storage-backend: ${DISTRIBUTED_FS_STORAGE_BACKEND:local}
     max-file-size-bytes: 26214400
     max-user-storage-bytes: 1073741824
     access-token-ttl-seconds: 900
@@ -13,6 +14,16 @@ distributed:
     refresh-cookie-secure: true
     refresh-cookie-same-site: Strict
     storage-root: .dfs-storage
+    oracle-object-storage:
+      namespace: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_NAMESPACE:}
+      bucket: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_BUCKET:}
+      object-prefix: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_OBJECT_PREFIX:distributed-fs}
+      config-file-path: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_CONFIG_FILE_PATH:}
+      config-profile: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_CONFIG_PROFILE:DEFAULT}
+      connection-timeout-millis: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_CONNECTION_TIMEOUT_MILLIS:10000}
+      read-timeout-millis: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_READ_TIMEOUT_MILLIS:30000}
+      max-retries: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_MAX_RETRIES:3}
+      initial-backoff-millis: ${DISTRIBUTED_FS_ORACLE_OBJECT_STORAGE_INITIAL_BACKOFF_MILLIS:500}
     failure-domains:
       - rack-a
       - rack-b

@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.MvcResult;
     "spring.datasource.driver-class-name=org.h2.Driver",
     "spring.datasource.username=sa",
     "spring.datasource.password=",
+    "distributed.fs.storage-backend=local",
     "distributed.fs.storage-root=target/file-controller-test-storage",
     "distributed.fs.max-file-size-bytes=3",
     "distributed.fs.max-user-storage-bytes=20"

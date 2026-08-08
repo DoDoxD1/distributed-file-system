@@ -1,5 +1,6 @@
 package com.distributedfs.config;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -15,6 +16,9 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "distributed.fs")
 public class DistributedFsProperties {
 
+    public static final String STORAGE_BACKEND_LOCAL = "local";
+    public static final String STORAGE_BACKEND_ORACLE_OBJECT_STORAGE = "oracle-object-storage";
+
     @Min(1)
     private int chunkSizeBytes = 1_048_576;
 
@@ -26,6 +30,9 @@ public class DistributedFsProperties {
 
     @Min(1)
     private int nodeCount = 4;
+
+    @NotBlank
+    private String storageBackend = STORAGE_BACKEND_LOCAL;
 
     @Min(1)
     private long maxFileSizeBytes = 26_214_400;
@@ -51,6 +58,9 @@ public class DistributedFsProperties {
     private String refreshCookieSameSite = "Strict";
 
     private Path storageRoot = Path.of(".dfs-storage");
+
+    @Valid
+    private OracleObjectStorageProperties oracleObjectStorage = new OracleObjectStorageProperties();
 
     @NotEmpty
     private List<@NotBlank String> failureDomains = List.of(
@@ -90,6 +100,16 @@ public class DistributedFsProperties {
 
     public void setNodeCount(int nodeCount) {
         this.nodeCount = nodeCount;
+    }
+
+    public String getStorageBackend() {
+        return storageBackend;
+    }
+
+    public void setStorageBackend(String storageBackend) {
+        this.storageBackend = storageBackend == null
+            ? null
+            : storageBackend.strip().toLowerCase();
     }
 
     public long getMaxFileSizeBytes() {
@@ -164,6 +184,14 @@ public class DistributedFsProperties {
         this.storageRoot = storageRoot;
     }
 
+    public OracleObjectStorageProperties getOracleObjectStorage() {
+        return oracleObjectStorage;
+    }
+
+    public void setOracleObjectStorage(OracleObjectStorageProperties oracleObjectStorage) {
+        this.oracleObjectStorage = oracleObjectStorage;
+    }
+
     public List<String> getFailureDomains() {
         return failureDomains;
     }
@@ -173,6 +201,16 @@ public class DistributedFsProperties {
     }
 
     public void validateCrossFieldConstraints() {
+        String normalizedStorageBackend = storageBackend == null
+            ? null
+            : storageBackend.strip().toLowerCase();
+        if (!STORAGE_BACKEND_LOCAL.equals(normalizedStorageBackend)
+            && !STORAGE_BACKEND_ORACLE_OBJECT_STORAGE.equals(normalizedStorageBackend)) {
+            throw new IllegalArgumentException(
+                "storageBackend must be one of [" + STORAGE_BACKEND_LOCAL + ", "
+                    + STORAGE_BACKEND_ORACLE_OBJECT_STORAGE + "]: " + storageBackend
+            );
+        }
         if (replicationFactor > nodeCount) {
             throw new IllegalArgumentException(
                 "replicationFactor cannot exceed nodeCount: "
@@ -195,6 +233,136 @@ public class DistributedFsProperties {
             if (domain == null || domain.isBlank()) {
                 throw new IllegalArgumentException("failureDomains cannot contain blank values");
             }
+        }
+        if (STORAGE_BACKEND_ORACLE_OBJECT_STORAGE.equals(normalizedStorageBackend)) {
+            OracleObjectStorageProperties oracleProperties = oracleObjectStorage;
+            if (oracleProperties == null) {
+                throw new IllegalArgumentException(
+                    "oracleObjectStorage settings are required for backend "
+                        + STORAGE_BACKEND_ORACLE_OBJECT_STORAGE
+                );
+            }
+            if (oracleProperties.namespace == null || oracleProperties.namespace.isBlank()) {
+                throw new IllegalArgumentException(
+                    "oracleObjectStorage.namespace must be configured for backend "
+                        + STORAGE_BACKEND_ORACLE_OBJECT_STORAGE
+                );
+            }
+            if (oracleProperties.bucket == null || oracleProperties.bucket.isBlank()) {
+                throw new IllegalArgumentException(
+                    "oracleObjectStorage.bucket must be configured for backend "
+                        + STORAGE_BACKEND_ORACLE_OBJECT_STORAGE
+                );
+            }
+            if (oracleProperties.configFilePath == null || oracleProperties.configFilePath.isBlank()) {
+                throw new IllegalArgumentException(
+                    "oracleObjectStorage.configFilePath must be configured for backend "
+                        + STORAGE_BACKEND_ORACLE_OBJECT_STORAGE
+                );
+            }
+            if (oracleProperties.configProfile == null || oracleProperties.configProfile.isBlank()) {
+                throw new IllegalArgumentException(
+                    "oracleObjectStorage.configProfile must be non-blank when provided"
+                );
+            }
+        }
+    }
+
+    public static class OracleObjectStorageProperties {
+
+        private String namespace = "";
+
+        private String bucket = "";
+
+        private String objectPrefix = "distributed-fs";
+
+        private String configFilePath = "";
+
+        @NotBlank
+        private String configProfile = "DEFAULT";
+
+        @Min(1)
+        private int connectionTimeoutMillis = 10_000;
+
+        @Min(1)
+        private int readTimeoutMillis = 30_000;
+
+        @Min(0)
+        private int maxRetries = 3;
+
+        @Min(1)
+        private long initialBackoffMillis = 500;
+
+        public String getNamespace() {
+            return namespace;
+        }
+
+        public void setNamespace(String namespace) {
+            this.namespace = namespace;
+        }
+
+        public String getBucket() {
+            return bucket;
+        }
+
+        public void setBucket(String bucket) {
+            this.bucket = bucket;
+        }
+
+        public String getObjectPrefix() {
+            return objectPrefix;
+        }
+
+        public void setObjectPrefix(String objectPrefix) {
+            this.objectPrefix = objectPrefix;
+        }
+
+        public String getConfigFilePath() {
+            return configFilePath;
+        }
+
+        public void setConfigFilePath(String configFilePath) {
+            this.configFilePath = configFilePath;
+        }
+
+        public String getConfigProfile() {
+            return configProfile;
+        }
+
+        public void setConfigProfile(String configProfile) {
+            this.configProfile = configProfile;
+        }
+
+        public int getConnectionTimeoutMillis() {
+            return connectionTimeoutMillis;
+        }
+
+        public void setConnectionTimeoutMillis(int connectionTimeoutMillis) {
+            this.connectionTimeoutMillis = connectionTimeoutMillis;
+        }
+
+        public int getReadTimeoutMillis() {
+            return readTimeoutMillis;
+        }
+
+        public void setReadTimeoutMillis(int readTimeoutMillis) {
+            this.readTimeoutMillis = readTimeoutMillis;
+        }
+
+        public int getMaxRetries() {
+            return maxRetries;
+        }
+
+        public void setMaxRetries(int maxRetries) {
+            this.maxRetries = maxRetries;
+        }
+
+        public long getInitialBackoffMillis() {
+            return initialBackoffMillis;
+        }
+
+        public void setInitialBackoffMillis(long initialBackoffMillis) {
+            this.initialBackoffMillis = initialBackoffMillis;
         }
     }
 }
