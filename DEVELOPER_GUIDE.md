@@ -13,9 +13,11 @@ The implementation preserves control-plane/data-plane separation:
 - Metadata authority:
   - `MetadataService` manages namespace, manifests, versions, chunk references, and tombstones using transactional relational persistence.
 - Data plane:
-  - `StorageNode` handles checksum-verified immutable chunk persistence.
+  - `StorageNode` defines checksum-verified immutable chunk persistence.
+  - `LocalStorageNode` persists chunk replicas under `storageRoot/<nodeId>/chunks`.
+  - `OracleObjectStorageNode` persists chunk replicas in Oracle Object Storage through `OracleObjectStorageBucketClient`.
 - Background workers:
-  - `BackgroundWorkerService` runs scan, repair, and GC flows.
+  - `BackgroundWorkerService` runs scan, repair, GC, and legacy local-to-bucket migration flows.
 
 ## Package map
 
@@ -27,19 +29,13 @@ The implementation preserves control-plane/data-plane separation:
 - `com.distributedfs.model`
   - `AuthenticatedUser`, `AuthenticatedSession`, `FileManifest`, `ChunkRecord`, `ChunkWrite`, `FileListing`
 - `com.distributedfs.service`
-  - `AuthenticationService`, `UserFileService`, `MetadataService`, `GatewayService`, `StorageNode`, `BackgroundWorkerService`
+  - `AuthenticationService`, `UserFileService`, `MetadataService`, `GatewayService`, `StorageNode`, `LocalStorageNode`, `OracleObjectStorageNode`, `OracleObjectStorageBucketClient`, `OciOracleObjectStorageBucketClient`, `BackgroundWorkerService`
 - `com.distributedfs.placement`
   - `RackAwarePlacementStrategy`
 - `com.distributedfs.cluster`
   - `LocalCluster`, `LocalClusterFactory`
 - `com.distributedfs.api`
   - `AuthController`, `FileController`, `WorkerController`, `AuthenticationInterceptor`, `RequestUserContext`, `GlobalExceptionHandler`
-- `com.distributedfs.error`
-  - domain-specific exception hierarchy
-- `com.distributedfs.util`
-  - chunking, hashing, password, and path-scope helpers
-- `src/main/resources/db/migration`
-  - Flyway metadata schema migrations
 
 ## Data flow details
 
@@ -89,6 +85,20 @@ The implementation preserves control-plane/data-plane separation:
   - restores replicas back to configured durability where possible.
 - `garbageCollect(Instant)`
   - deletes unreferenced chunk files and purges metadata records.
+- `migrateLocalChunksToBucket()`
+  - runs only when `distributed.fs.storage-backend=oracle-object-storage`.
+  - reads legacy local chunk files from `distributed.fs.storage-root/<nodeId>/chunks/*.chunk`.
+  - writes them to the Oracle-backed node with the same `nodeId`.
+  - deletes each local source file only after a successful write.
+
+### Legacy local-to-bucket migration
+
+1. Switch runtime configuration to `distributed.fs.storage-backend=oracle-object-storage`.
+2. Keep the legacy local chunk files under the existing `distributed.fs.storage-root`.
+3. Call `POST /api/v1/workers/migrate-local-chunks` with an authenticated bearer token.
+4. `BackgroundWorkerService` walks each legacy `storageRoot/<nodeId>/chunks` directory.
+5. Each chunk is checksum-verified through `StorageNode.writeChunk()` before the local source is deleted.
+6. The flow is idempotent for already-migrated bucket objects because duplicate writes are checksum-checked.
 
 ## Consistency and durability semantics
 
@@ -104,7 +114,7 @@ Per repository policy, runtime-overridable values are centralized.
 | Config module/file | Purpose | Runtime keys |
 | --- | --- | --- |
 | `src/main/resources/application.yml` | Default distributed FS runtime values and optional local secret import | `distributed.fs.*`, `spring.config.import` |
-| `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.access-token-ttl-seconds`, `distributed.fs.refresh-token-ttl-seconds`, `distributed.fs.refresh-cookie-name`, `distributed.fs.refresh-cookie-path`, `distributed.fs.refresh-cookie-secure`, `distributed.fs.refresh-cookie-same-site`, `distributed.fs.storage-root`, `distributed.fs.failure-domains` |
+| `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.storage-backend`, `distributed.fs.max-file-size-bytes`, `distributed.fs.max-user-storage-bytes`, `distributed.fs.access-token-ttl-seconds`, `distributed.fs.refresh-token-ttl-seconds`, `distributed.fs.refresh-cookie-name`, `distributed.fs.refresh-cookie-path`, `distributed.fs.refresh-cookie-secure`, `distributed.fs.refresh-cookie-same-site`, `distributed.fs.storage-root`, `distributed.fs.oracle-object-storage.namespace`, `distributed.fs.oracle-object-storage.bucket`, `distributed.fs.oracle-object-storage.object-prefix`, `distributed.fs.oracle-object-storage.config-file-path`, `distributed.fs.oracle-object-storage.config-profile`, `distributed.fs.oracle-object-storage.connection-timeout-millis`, `distributed.fs.oracle-object-storage.read-timeout-millis`, `distributed.fs.oracle-object-storage.max-retries`, `distributed.fs.oracle-object-storage.initial-backoff-millis`, `distributed.fs.failure-domains` |
 | `src/main/resources/application.yml` | Metadata datasource and pool configuration | `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password`, `spring.datasource.driver-class-name`, `spring.datasource.hikari.maximum-pool-size`, `spring.datasource.hikari.connection-timeout`, `spring.datasource.hikari.data-source-properties.sslmode` |
 | `src/main/resources/application.yml` | Flyway migration configuration | `spring.flyway.enabled`, `spring.flyway.locations` |
 | `src/main/resources/application.yml` | Swagger/OpenAPI endpoint configuration | `springdoc.api-docs.path`, `springdoc.swagger-ui.path`, `springdoc.swagger-ui.operations-sorter`, `springdoc.swagger-ui.tags-sorter`, `springdoc.swagger-ui.display-request-duration` |
@@ -173,6 +183,17 @@ Fallback local metadata environment variables remain supported:
 - `POST /api/v1/workers/scan`
 - `POST /api/v1/workers/repair`
 - `POST /api/v1/workers/gc?referenceTime=<ISO-8601>`
+- `POST /api/v1/workers/migrate-local-chunks`
+  - request: no body
+  - response: `WorkerRunResponse(worker, affectedCount)`
+  - constraint: only valid when the active backend is Oracle Object Storage
+
+### System API (`/api/v1/system`)
+
+- `GET /api/v1/system/health`
+  - response: metadata database status and timestamp
+- `GET /api/v1/system/version`
+  - response: application name and resolved build version
 
 ### API documentation endpoints
 
@@ -194,13 +215,21 @@ Current tests validate behavior changes requested in `plan.md`:
 - `BackgroundWorkerServiceTest`
   - replica scan+repair lifecycle
   - retention-based garbage collection
+  - local-to-bucket migration behavior against Oracle-backed nodes using an in-memory bucket client
+- `OracleObjectStorageNodeTest`
+  - Oracle-backed node read/write/list/delete behavior and object-prefix handling
+- `DistributedFsPropertiesTest`
+  - backend-selection validation for Oracle Object Storage configuration
+- `WorkerControllerIntegrationTest`
+  - authenticated migration endpoint behavior when the Oracle backend is not active
 
 Tests are integration-style using `LocalClusterFactory` with per-test temporary storage directories and a file-backed H2 metadata database migrated with Flyway.
 
 ## Known MVP limits and next steps
 
-- Metadata durability depends on the configured relational database instance; Supabase improves metadata resilience, but local chunk storage and the single app host remain deployment-level SPOFs.
+- Metadata durability depends on the configured relational database instance; the single app host still coordinates all worker execution and API traffic.
 - Worker scheduling is manual/API-triggered; no periodic scheduler yet.
+- Worker endpoints require authentication, but they are not yet restricted to an admin-only role.
 - No rate limiting/backpressure controls yet.
 
 Natural next hardening milestones:
@@ -208,4 +237,4 @@ Natural next hardening milestones:
 1. Persist metadata in a consensus-backed store.
 2. Add health scoring and rebalancing logic.
 3. Add quotas, admission control, and rate limiting.
-4. Add background scheduling and metrics export.
+4. Add background scheduling, worker authorization, and metrics export.

@@ -9,17 +9,19 @@ The system already provides:
 - Chunked upload, download, delete, list, and version flows
 - Transactional relational metadata with Flyway migrations
 - Rack-aware replica placement and durability checks
-- Background scan, repair, and garbage-collection workers
+- Background scan, repair, garbage-collection, and local-to-bucket migration workers
 - Hybrid authentication with short-lived access tokens and refresh-token cookies
 - Per-user logical namespace isolation
+- Configurable chunk storage using either local filesystem nodes or Oracle Object Storage
 - Integration-style coverage for gateway, worker, and auth flows
 
 ## Production-readiness gaps
 
 The main reasons this should still be treated as an MVP are:
 
-- Chunk storage is still tied to local filesystem storage on the app host
 - Worker execution is manual and API-triggered instead of scheduled
+- Worker endpoints are authenticated, but they are not yet restricted to administrators
+- Oracle Object Storage cutovers still rely on an operator-triggered migration step
 - Rate limiting and admission control are not implemented
 - Operational observability is still limited
 - Recovery and deployment runbooks need to be formalized
@@ -41,7 +43,8 @@ Goal: make the current application safe to operate in a real hosted environment.
 
 Goal: reduce operational fragility and manual recovery work.
 
-- Schedule background replica scan, repair, and garbage collection automatically
+- Schedule background replica scan, repair, garbage collection, and local-to-bucket migration verification automatically
+- Add cron-style worker execution with bounded concurrency, logging, and retry policy
 - Add metadata backup and restore procedures
 - Add startup validation for storage-root availability and writable paths
 - Improve node health scoring and replica repair prioritization
@@ -55,7 +58,8 @@ Goal: improve resilience against misuse and strengthen trust boundaries.
 - Add audit-friendly security logging for login, refresh, and worker invocations
 - Review CORS and cookie policy for cross-origin deployments
 - Add stronger operational guidance around secrets, credential rotation, and least-privilege database access
-- Consider role-based authorization for worker and administrative endpoints
+- Add an admin-only authorization layer for `WorkerController` endpoints so maintenance APIs are not callable by every authenticated user
+- Extend role-based authorization to future administrative endpoints
 
 ### Phase 4: Observability and operations
 
@@ -63,7 +67,7 @@ Goal: make failures visible and diagnosable without manual digging.
 
 - Add structured request logging with traceable request and object identifiers
 - Publish metrics for upload latency, chunk durability, repair activity, and GC outcomes
-- Add dashboards and alerts for migration failure, replication deficit, worker errors, and storage exhaustion
+- Add dashboards and alerts for migration failure, replication deficit, worker errors, storage exhaustion, and stuck scheduled jobs
 - Expose operational health summaries for storage nodes and chunk replica state
 - Add clear runbooks for common incidents and partial-failure recovery
 
@@ -81,16 +85,17 @@ Goal: improve adoption, usability, and day-2 developer experience.
 
 If only a few items are implemented next, these would likely provide the biggest return:
 
-1. Add scheduled background workers
-2. Add deployment and recovery runbooks
-3. Add rate limiting to auth and upload APIs
-4. Add metrics, alerts, and structured operational logs
-5. Reduce dependence on a single app host for chunk storage
+1. Add admin-only authorization for worker endpoints
+2. Add scheduled background workers and cron-style execution control
+3. Add deployment and recovery runbooks
+4. Add rate limiting to auth and upload APIs
+5. Add metrics, alerts, and structured operational logs
 
 ## Longer-term architecture evolution
 
 For a more production-oriented distributed storage system, the longer horizon could include:
 
+- Automated cutover tooling for legacy local chunks after a backend switch
 - Multi-host or externalized chunk storage instead of single-host local disk
 - Better health-aware or load-aware placement decisions
 - Metadata snapshots and stronger disaster recovery guarantees

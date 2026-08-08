@@ -11,10 +11,11 @@ This project demonstrates my approach to designing and delivering robust backend
   storage.
 - Implemented transactional relational metadata persistence with atomic manifest commit.
 - Added rack-aware replica placement and durability checks before publish.
-- Designed maintenance workers for replica scan, under-replication repair, and retention-based
-  garbage collection.
+- Designed maintenance workers for replica scan, under-replication repair, retention-based
+  garbage collection, and legacy local-to-bucket chunk migration.
 - Added hybrid auth with short-lived access tokens, secure refresh cookies, and per-user file namespaces.
 - Exposed REST APIs with centralized exception mapping and boundary validation.
+- Added a pluggable chunk-storage layer with both local filesystem and Oracle Object Storage backends.
 - Added interactive Swagger UI and OpenAPI docs for quick API exploration.
 - Added JUnit tests that exercise gateway and worker behavior through a local in-process cluster.
 
@@ -32,6 +33,8 @@ This project demonstrates my approach to designing and delivering robust backend
 - Files are split into fixed-size chunks (`distributed.fs.chunk-size-bytes`, default `1_048_576`).
 - Each chunk has a SHA-256 content address (`chunkId`) and checksum validation.
 - File versions are immutable manifests with ordered chunk IDs and tombstone support.
+- Chunk replicas can be stored on either the local filesystem or Oracle Object Storage, selected by
+  `distributed.fs.storage-backend`.
 
 ### 2) Metadata and consistency
 
@@ -39,7 +42,6 @@ This project demonstrates my approach to designing and delivering robust backend
   - namespace (`logicalPath -> fileId`)
   - version history
   - chunk replica state
-  - idempotency index
 - Metadata is persisted in a Flyway-managed relational schema and committed transactionally.
 - Manifest publish is atomic and happens only after required replica acknowledgements.
 
@@ -54,6 +56,9 @@ This project demonstrates my approach to designing and delivering robust backend
 - `scanAndPruneMissingReplicas()` removes stale or corrupt replica references.
 - `repairUnderReplicatedChunks()` restores replica count toward configured durability.
 - `garbageCollect()` removes unreferenced chunks after retention threshold.
+- `migrateLocalChunksToBucket()` moves legacy local chunk files from
+  `distributed.fs.storage-root/<nodeId>/chunks/*.chunk` into the configured Oracle bucket and deletes
+  the local source after a successful write.
 
 ### 5) Authentication and ownership
 
@@ -95,6 +100,13 @@ Base path: `/api/v1`
 - `POST /workers/scan`
 - `POST /workers/repair`
 - `POST /workers/gc`
+- `POST /workers/migrate-local-chunks` - migrate legacy local chunks into Oracle Object Storage when
+  `distributed.fs.storage-backend=oracle-object-storage`
+
+### System
+
+- `GET /system/health` - metadata database reachability check
+- `GET /system/version` - application name and build version
 
 ### API docs
 
@@ -125,6 +137,9 @@ Supported keys under `distributed.fs`:
 - `replication-factor`
 - `gc-retention-seconds`
 - `node-count`
+- `storage-backend`
+- `max-file-size-bytes`
+- `max-user-storage-bytes`
 - `access-token-ttl-seconds`
 - `refresh-token-ttl-seconds`
 - `refresh-cookie-name`
@@ -132,6 +147,15 @@ Supported keys under `distributed.fs`:
 - `refresh-cookie-secure`
 - `refresh-cookie-same-site`
 - `storage-root`
+- `oracle-object-storage.namespace`
+- `oracle-object-storage.bucket`
+- `oracle-object-storage.object-prefix`
+- `oracle-object-storage.config-file-path`
+- `oracle-object-storage.config-profile`
+- `oracle-object-storage.connection-timeout-millis`
+- `oracle-object-storage.read-timeout-millis`
+- `oracle-object-storage.max-retries`
+- `oracle-object-storage.initial-backoff-millis`
 - `failure-domains`
 
 Metadata datasource settings are configured via `spring.datasource.*` and environment overrides.
@@ -152,6 +176,9 @@ The existing local overrides remain supported:
 
 For local development, Spring Boot also imports an optional repo-root `.env` file using
 `spring.config.import`, so you can keep secrets outside `application.yml`.
+
+For Oracle Object Storage local development, keep the OCI config path and bucket settings in `.env`, and
+store the OCI profile plus private key outside the repository.
 
 If you run locally over plain HTTP, a browser will not send a `Secure` refresh cookie. The default
 is intentionally secure for production. Override `distributed.fs.refresh-cookie-secure=false` only
@@ -179,10 +206,13 @@ Typical Oracle VM deployment shape for this project:
 
 - Spring Boot app on the VM
 - Supabase Postgres or another PostgreSQL instance for metadata persistence
-- Local filesystem under `distributed.fs.storage-root` for chunk data
+- Either local filesystem under `distributed.fs.storage-root` or Oracle Object Storage for chunk data
+- Optional one-time `POST /api/v1/workers/migrate-local-chunks` call after switching from local storage to
+  the Oracle backend
 
 ## Current limits
 
-- Metadata is durable in PostgreSQL, but overall system availability still depends on the single app host and local chunk storage.
+- Metadata is durable in PostgreSQL, but overall system availability still depends on the single app host and the chosen chunk backend configuration.
 - Worker execution is API-triggered, not scheduled.
+- Worker endpoints are authenticated, but they are not yet restricted to an admin-only role.
 - Metadata replication and consensus are not included yet.
