@@ -48,6 +48,12 @@ public class WorkerController {
         return new WorkerRunResponse("garbageCollect", removedChunks);
     }
 
+    @PostMapping(value = "/migrate-local-chunks", produces = MediaType.APPLICATION_JSON_VALUE)
+    public WorkerRunResponse migrateLocalChunksToBucket() {
+        int migratedChunks = backgroundWorkerService.migrateLocalChunksToBucket();
+        return new WorkerRunResponse("migrateLocalChunksToBucket", migratedChunks);
+    }
+
     private static Instant parseReferenceTime(String referenceTime) {
         if (referenceTime == null || referenceTime.isBlank()) {
             return null;

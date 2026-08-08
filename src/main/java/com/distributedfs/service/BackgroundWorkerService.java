@@ -6,9 +6,13 @@ import com.distributedfs.error.ValidationException;
 import com.distributedfs.model.ChunkRecord;
 import com.distributedfs.placement.RackAwarePlacementStrategy;
 import com.distributedfs.util.HashingUtil;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -193,6 +197,54 @@ public class BackgroundWorkerService {
         return removedChunks;
     }
 
+    public int migrateLocalChunksToBucket() {
+        if (!DistributedFsProperties.STORAGE_BACKEND_ORACLE_OBJECT_STORAGE.equals(
+            properties.getStorageBackend()
+        )) {
+            throw new ValidationException(
+                "Local chunk migration requires storageBackend="
+                    + DistributedFsProperties.STORAGE_BACKEND_ORACLE_OBJECT_STORAGE
+            );
+        }
+
+        int migratedChunks = 0;
+        for (StorageNode node : storageNodes.values().stream().sorted(
+            java.util.Comparator.comparing(StorageNode::nodeId)
+        ).toList()) {
+            if (!(node instanceof OracleObjectStorageNode)) {
+                throw new DistributedFsException(
+                    "Oracle Object Storage backend selected but node is not Oracle-backed: "
+                        + node.nodeId()
+                );
+            }
+
+            Path localNodeDirectory = properties.getStorageRoot().resolve(node.nodeId());
+            Path localChunkDirectory = LocalStorageNode.resolveChunkDirectory(localNodeDirectory);
+            if (!Files.isDirectory(localChunkDirectory)) {
+                continue;
+            }
+
+            List<Path> chunkFiles;
+            try (var pathStream = Files.list(localChunkDirectory)) {
+                chunkFiles = pathStream
+                    .filter(LocalStorageNode::isChunkFile)
+                    .sorted()
+                    .toList();
+            } catch (IOException error) {
+                throw new DistributedFsException(
+                    "Failed to list local chunks for node " + node.nodeId(),
+                    error
+                );
+            }
+
+            for (Path chunkFile : chunkFiles) {
+                migratedChunks += migrateLocalChunkToBucket(node, chunkFile);
+            }
+        }
+
+        return migratedChunks;
+    }
+
     private Optional<byte[]> readFromExistingReplica(String chunkId, Set<String> replicaNodeIds) {
         for (String nodeId : replicaNodeIds.stream().sorted().toList()) {
             StorageNode node = storageNodes.get(nodeId);
@@ -219,5 +271,37 @@ public class BackgroundWorkerService {
                 nodeId
             );
         }
+    }
+
+    private int migrateLocalChunkToBucket(StorageNode node, Path chunkFile) {
+        String chunkId = LocalStorageNode.chunkIdFromChunkFile(chunkFile);
+        byte[] payload;
+        try {
+            payload = Files.readAllBytes(chunkFile);
+        } catch (IOException error) {
+            throw new DistributedFsException(
+                "Failed to read local chunk file for migration: " + chunkFile,
+                error
+            );
+        }
+
+        String checksum = HashingUtil.sha256Hex(payload);
+        node.writeChunk(chunkId, payload, checksum);
+
+        try {
+            Files.delete(chunkFile);
+        } catch (IOException error) {
+            throw new DistributedFsException(
+                "Failed to delete migrated local chunk file: " + chunkFile,
+                error
+            );
+        }
+
+        LOGGER.info(
+            "migrated local chunk to bucket: chunk_id={}, node_id={}",
+            chunkId,
+            node.nodeId()
+        );
+        return 1;
     }
 }

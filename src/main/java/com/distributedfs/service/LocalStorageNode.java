@@ -12,6 +12,9 @@ import java.util.stream.Stream;
 
 public class LocalStorageNode extends StorageNode {
 
+    static final String CHUNK_DIRECTORY_NAME = "chunks";
+    static final String CHUNK_FILE_SUFFIX = ".chunk";
+
     private final Path storageDirectory;
 
     public LocalStorageNode(String nodeId, String failureDomain, Path storageDirectory) {
@@ -20,7 +23,7 @@ public class LocalStorageNode extends StorageNode {
 
         try {
             Files.createDirectories(storageDirectory);
-            Files.createDirectories(chunkDirectory());
+            Files.createDirectories(resolveChunkDirectory(storageDirectory));
         } catch (IOException error) {
             throw new DistributedFsException(
                 "Failed to initialize storage directories for node " + nodeId,
@@ -31,13 +34,13 @@ public class LocalStorageNode extends StorageNode {
 
     @Override
     protected boolean hasChunkInternal(String chunkId) {
-        return Files.exists(chunkPath(chunkId));
+        return Files.exists(resolveChunkPath(storageDirectory, chunkId));
     }
 
     @Override
     protected void writeChunkInternal(String chunkId, byte[] payload) {
         try {
-            Files.write(chunkPath(chunkId), payload);
+            Files.write(resolveChunkPath(storageDirectory, chunkId), payload);
         } catch (IOException error) {
             throw new DistributedFsException(
                 "Failed to persist chunk " + chunkId + " on node " + nodeId(),
@@ -49,7 +52,7 @@ public class LocalStorageNode extends StorageNode {
     @Override
     protected byte[] readChunkInternal(String chunkId) {
         try {
-            return Files.readAllBytes(chunkPath(chunkId));
+            return Files.readAllBytes(resolveChunkPath(storageDirectory, chunkId));
         } catch (IOException error) {
             throw new DistributedFsException(
                 "Failed to read chunk " + chunkId + " from node " + nodeId(),
@@ -61,7 +64,7 @@ public class LocalStorageNode extends StorageNode {
     @Override
     protected void deleteChunkInternal(String chunkId) {
         try {
-            Files.delete(chunkPath(chunkId));
+            Files.delete(resolveChunkPath(storageDirectory, chunkId));
         } catch (IOException error) {
             throw new DistributedFsException(
                 "Failed to delete chunk " + chunkId + " from node " + nodeId(),
@@ -72,14 +75,11 @@ public class LocalStorageNode extends StorageNode {
 
     @Override
     protected List<String> listChunksInternal() {
-        try (Stream<Path> pathStream = Files.list(chunkDirectory())) {
+        try (Stream<Path> pathStream = Files.list(resolveChunkDirectory(storageDirectory))) {
             List<String> chunkIds = new ArrayList<>();
             pathStream
-                .filter(path -> path.getFileName().toString().endsWith(".chunk"))
-                .forEach(path -> {
-                    String fileName = path.getFileName().toString();
-                    chunkIds.add(fileName.substring(0, fileName.length() - 6));
-                });
+                .filter(LocalStorageNode::isChunkFile)
+                .forEach(path -> chunkIds.add(chunkIdFromChunkFile(path)));
             chunkIds.sort(Comparator.naturalOrder());
             return chunkIds;
         } catch (IOException error) {
@@ -90,12 +90,25 @@ public class LocalStorageNode extends StorageNode {
         }
     }
 
-    private Path chunkDirectory() {
-        return storageDirectory.resolve("chunks");
+    static Path resolveChunkDirectory(Path storageDirectory) {
+        return storageDirectory.resolve(CHUNK_DIRECTORY_NAME);
     }
 
-    private Path chunkPath(String chunkId) {
-        return chunkDirectory().resolve(chunkId + ".chunk");
+    static Path resolveChunkPath(Path storageDirectory, String chunkId) {
+        return resolveChunkDirectory(storageDirectory).resolve(validateChunkId(chunkId) + CHUNK_FILE_SUFFIX);
+    }
+
+    static boolean isChunkFile(Path path) {
+        return path != null && path.getFileName() != null
+            && path.getFileName().toString().endsWith(CHUNK_FILE_SUFFIX);
+    }
+
+    static String chunkIdFromChunkFile(Path path) {
+        if (!isChunkFile(path)) {
+            throw new ValidationException("path must reference a chunk file: " + path);
+        }
+        String fileName = path.getFileName().toString();
+        return fileName.substring(0, fileName.length() - CHUNK_FILE_SUFFIX.length());
     }
 
     private static Path validateStorageDirectory(Path storageDirectory) {
