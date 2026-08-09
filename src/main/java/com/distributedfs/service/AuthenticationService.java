@@ -53,12 +53,14 @@ public class AuthenticationService {
             transactionTemplate.executeWithoutResult(status -> {
                 jdbcTemplate.update(
                     """
-                    insert into dfs_users(user_id, email, password_hash, created_at)
-                    values (?, ?, ?, ?)
+                    insert into dfs_users(user_id, email, password_hash, is_admin, admin_singleton_key, created_at)
+                    values (?, ?, ?, ?, ?, ?)
                     """,
                     userId,
                     normalizedEmail,
                     passwordHash,
+                    false,
+                    null,
                     Timestamp.from(now)
                 );
             });
@@ -69,7 +71,12 @@ public class AuthenticationService {
         }
 
         UserRow persistedUser = requireUserByEmail(normalizedEmail);
-        return createSession(persistedUser.userId(), persistedUser.email(), persistedUser.createdAt());
+        return createSession(
+            persistedUser.userId(),
+            persistedUser.email(),
+            persistedUser.isAdmin(),
+            persistedUser.createdAt()
+        );
     }
 
     public AuthenticatedSession login(String email, String password) {
@@ -79,7 +86,50 @@ public class AuthenticationService {
         if (userRow == null || !PasswordHashingUtil.matches(normalizedPassword, userRow.passwordHash())) {
             throw new AuthenticationException("Invalid email or password");
         }
-        return createSession(userRow.userId(), userRow.email(), userRow.createdAt());
+        return createSession(userRow.userId(), userRow.email(), userRow.isAdmin(), userRow.createdAt());
+    }
+
+    public void ensureBootstrapAdmin(String email, String password) {
+        if (countAdminUsers() > 0) {
+            return;
+        }
+        if (email == null || email.isBlank() || password == null || password.isBlank()) {
+            throw new IllegalStateException(
+                "No admin user exists. Configure distributed.fs.bootstrap-admin.email and distributed.fs.bootstrap-admin.password"
+            );
+        }
+        String normalizedEmail = normalizeEmail(email);
+        String normalizedPassword = normalizePassword(password);
+        if (findUserByEmail(normalizedEmail) != null) {
+            throw new IllegalStateException(
+                "Cannot bootstrap admin because a user already exists with email: " + normalizedEmail
+            );
+        }
+        Instant now = normalizeTimestamp(timeProvider.now());
+        String userId = newId();
+        String passwordHash = PasswordHashingUtil.hashPassword(normalizedPassword);
+
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                jdbcTemplate.update(
+                    """
+                    insert into dfs_users(user_id, email, password_hash, is_admin, admin_singleton_key, created_at)
+                    values (?, ?, ?, ?, ?, ?)
+                    """,
+                    userId,
+                    normalizedEmail,
+                    passwordHash,
+                    true,
+                    1,
+                    Timestamp.from(now)
+                );
+            });
+        } catch (DuplicateKeyException error) {
+            if (countAdminUsers() > 0) {
+                return;
+            }
+            throw new IllegalStateException("Failed to bootstrap admin user", error);
+        }
     }
 
     public AuthenticatedUser authenticate(String token) {
@@ -87,7 +137,7 @@ public class AuthenticationService {
         String tokenHash = PasswordHashingUtil.hashToken(normalizedToken);
         AccessSessionRow sessionRow = jdbcTemplate.query(
             """
-            select s.user_id, u.email, u.created_at, s.expires_at
+            select s.user_id, u.email, u.is_admin, u.created_at, s.expires_at
             from dfs_user_sessions s
             join dfs_users u on u.user_id = s.user_id
             where s.token_hash = ?
@@ -103,7 +153,12 @@ public class AuthenticationService {
             jdbcTemplate.update("delete from dfs_user_sessions where token_hash = ?", tokenHash);
             throw new AuthenticationException("Authentication token has expired");
         }
-        return new AuthenticatedUser(sessionRow.userId(), sessionRow.email(), sessionRow.createdAt());
+        return new AuthenticatedUser(
+            sessionRow.userId(),
+            sessionRow.email(),
+            sessionRow.isAdmin(),
+            sessionRow.createdAt()
+        );
     }
 
     public AuthenticatedSession refresh(String refreshToken) {
@@ -111,7 +166,7 @@ public class AuthenticationService {
         String refreshTokenHash = PasswordHashingUtil.hashToken(normalizedRefreshToken);
         RefreshSessionRow refreshSession = jdbcTemplate.query(
             """
-            select s.user_id, u.email, u.created_at, s.expires_at
+            select s.user_id, u.email, u.is_admin, u.created_at, s.expires_at
             from dfs_user_refresh_sessions s
             join dfs_users u on u.user_id = s.user_id
             where s.token_hash = ?
@@ -139,11 +194,17 @@ public class AuthenticationService {
         return createSession(
             refreshSession.userId(),
             refreshSession.email(),
+            refreshSession.isAdmin(),
             refreshSession.createdAt()
         );
     }
 
-    private AuthenticatedSession createSession(String userId, String email, Instant userCreatedAt) {
+    private AuthenticatedSession createSession(
+        String userId,
+        String email,
+        boolean isAdmin,
+        Instant userCreatedAt
+    ) {
         Instant now = normalizeTimestamp(timeProvider.now());
         Instant accessTokenExpiresAt = normalizeTimestamp(now.plusSeconds(accessTokenTtlSeconds));
         Instant refreshTokenExpiresAt = normalizeTimestamp(now.plusSeconds(refreshTokenTtlSeconds));
@@ -188,7 +249,7 @@ public class AuthenticationService {
             accessTokenExpiresAt,
             refreshToken,
             refreshTokenExpiresAt,
-            new AuthenticatedUser(userId, email, userCreatedAt),
+            new AuthenticatedUser(userId, email, isAdmin, userCreatedAt),
             now
         );
     }
@@ -198,6 +259,7 @@ public class AuthenticationService {
             resultSet.getString("user_id"),
             resultSet.getString("email"),
             resultSet.getString("password_hash"),
+            resultSet.getBoolean("is_admin"),
             resultSet.getTimestamp("created_at").toInstant()
         );
     }
@@ -205,13 +267,22 @@ public class AuthenticationService {
     private UserRow findUserByEmail(String normalizedEmail) {
         return jdbcTemplate.query(
             """
-            select user_id, email, password_hash, created_at
+            select user_id, email, password_hash, is_admin, created_at
             from dfs_users
             where email = ?
             """,
             this::mapUserRow,
             normalizedEmail
         ).stream().findFirst().orElse(null);
+    }
+
+    private int countAdminUsers() {
+        Integer adminCount = jdbcTemplate.queryForObject(
+            "select count(*) from dfs_users where is_admin = ?",
+            Integer.class,
+            true
+        );
+        return adminCount == null ? 0 : adminCount;
     }
 
     private UserRow requireUserByEmail(String normalizedEmail) {
@@ -226,6 +297,7 @@ public class AuthenticationService {
         return new AccessSessionRow(
             resultSet.getString("user_id"),
             resultSet.getString("email"),
+            resultSet.getBoolean("is_admin"),
             resultSet.getTimestamp("created_at").toInstant(),
             resultSet.getTimestamp("expires_at").toInstant()
         );
@@ -235,6 +307,7 @@ public class AuthenticationService {
         return new RefreshSessionRow(
             resultSet.getString("user_id"),
             resultSet.getString("email"),
+            resultSet.getBoolean("is_admin"),
             resultSet.getTimestamp("created_at").toInstant(),
             resultSet.getTimestamp("expires_at").toInstant()
         );
@@ -288,12 +361,30 @@ public class AuthenticationService {
         return Timestamp.from(timestamp).toInstant();
     }
 
-    private record UserRow(String userId, String email, String passwordHash, Instant createdAt) {
+    private record UserRow(
+        String userId,
+        String email,
+        String passwordHash,
+        boolean isAdmin,
+        Instant createdAt
+    ) {
     }
 
-    private record AccessSessionRow(String userId, String email, Instant createdAt, Instant expiresAt) {
+    private record AccessSessionRow(
+        String userId,
+        String email,
+        boolean isAdmin,
+        Instant createdAt,
+        Instant expiresAt
+    ) {
     }
 
-    private record RefreshSessionRow(String userId, String email, Instant createdAt, Instant expiresAt) {
+    private record RefreshSessionRow(
+        String userId,
+        String email,
+        boolean isAdmin,
+        Instant createdAt,
+        Instant expiresAt
+    ) {
     }
 }

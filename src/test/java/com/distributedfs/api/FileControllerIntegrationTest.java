@@ -26,6 +26,8 @@ import org.springframework.test.web.servlet.MvcResult;
     "spring.datasource.username=sa",
     "spring.datasource.password=",
     "distributed.fs.storage-backend=local",
+    "distributed.fs.bootstrap-admin.email=admin@example.com",
+    "distributed.fs.bootstrap-admin.password=password123",
     "distributed.fs.storage-root=target/file-controller-test-storage",
     "distributed.fs.max-file-size-bytes=3",
     "distributed.fs.max-user-storage-bytes=20"

@@ -25,6 +25,8 @@ import org.springframework.test.web.servlet.MvcResult;
     "spring.datasource.username=sa",
     "spring.datasource.password=",
     "distributed.fs.storage-backend=local",
+    "distributed.fs.bootstrap-admin.email=worker-admin@example.com",
+    "distributed.fs.bootstrap-admin.password=password123",
     "distributed.fs.storage-root=target/worker-controller-test-storage"
 })
 class WorkerControllerIntegrationTest {
@@ -33,8 +35,22 @@ class WorkerControllerIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void migrateLocalChunksRequiresOracleStorageBackend() throws Exception {
-        String accessToken = registerAndExtractAccessToken();
+    void workerEndpointsRejectNonAdminUsers() throws Exception {
+        String accessToken = registerAndExtractAccessToken("worker-user@example.com");
+
+        mockMvc.perform(
+            post("/api/v1/workers/scan")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+        )
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error").value("authorization_error"))
+            .andExpect(jsonPath("$.message", containsString("bootstrap admin user")));
+    }
+
+    @Test
+    void adminUserCanInvokeWorkerEndpoints() throws Exception {
+        String accessToken = loginAndExtractAccessToken("worker-admin@example.com", "password123");
 
         mockMvc.perform(
             post("/api/v1/workers/migrate-local-chunks")
@@ -46,21 +62,39 @@ class WorkerControllerIntegrationTest {
             .andExpect(jsonPath("$.message", containsString("storageBackend=oracle-object-storage")));
     }
 
-    private String registerAndExtractAccessToken() throws Exception {
+    private String registerAndExtractAccessToken(String email) throws Exception {
         MvcResult registerResult = mockMvc.perform(
             post("/api/v1/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "email": "worker-test@example.com",
+                      "email": "%s",
                       "password": "password123"
                     }
-                    """)
+                    """.formatted(email))
         )
             .andExpect(status().isOk())
             .andReturn();
 
         return extractJsonField(registerResult.getResponse().getContentAsString(), "token");
+    }
+
+    private String loginAndExtractAccessToken(String email, String password) throws Exception {
+        MvcResult loginResult = mockMvc.perform(
+            post("/api/v1/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "email": "%s",
+                      "password": "%s"
+                    }
+                    """.formatted(email, password))
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.user.isAdmin").value(true))
+            .andReturn();
+
+        return extractJsonField(loginResult.getResponse().getContentAsString(), "token");
     }
 
     private String extractJsonField(String json, String fieldName) {

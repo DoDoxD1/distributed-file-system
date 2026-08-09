@@ -27,6 +27,8 @@ import org.springframework.test.web.servlet.MvcResult;
     "spring.datasource.username=sa",
     "spring.datasource.password=",
     "distributed.fs.storage-backend=local",
+    "distributed.fs.bootstrap-admin.email=admin@example.com",
+    "distributed.fs.bootstrap-admin.password=password123",
     "distributed.fs.storage-root=target/auth-controller-test-storage",
     "distributed.fs.access-token-ttl-seconds=900",
     "distributed.fs.refresh-token-ttl-seconds=86400",
@@ -54,6 +56,7 @@ class AuthControllerIntegrationTest {
         )
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.token").isString())
+            .andExpect(jsonPath("$.user.isAdmin").value(false))
             .andExpect(header().string("Set-Cookie", containsString("dfs_refresh_token=")))
             .andExpect(header().string("Set-Cookie", containsString("HttpOnly")))
             .andExpect(header().string("Set-Cookie", containsString("Secure")))

@@ -34,4 +34,29 @@ class DistributedFsPropertiesTest {
 
         assertDoesNotThrow(properties::validateCrossFieldConstraints);
     }
+
+    @Test
+    void bootstrapAdminRequiresEmailAndPasswordTogether() {
+        DistributedFsProperties properties = new DistributedFsProperties();
+        properties.getBootstrapAdmin().setEmail("admin@example.com");
+
+        IllegalArgumentException error = assertThrows(
+            IllegalArgumentException.class,
+            properties::validateCrossFieldConstraints
+        );
+
+        assertEquals(
+            "bootstrapAdmin.email and bootstrapAdmin.password must be configured together",
+            error.getMessage()
+        );
+    }
+
+    @Test
+    void normalizesBootstrapAdminEmail() {
+        DistributedFsProperties properties = new DistributedFsProperties();
+
+        properties.getBootstrapAdmin().setEmail(" Admin@Example.com ");
+
+        assertEquals("admin@example.com", properties.getBootstrapAdmin().getEmail());
+    }
 }

@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -33,6 +34,9 @@ public class DistributedFsProperties {
 
     @NotBlank
     private String storageBackend = STORAGE_BACKEND_LOCAL;
+
+    @Valid
+    private BootstrapAdminProperties bootstrapAdmin = new BootstrapAdminProperties();
 
     @Min(1)
     private long maxFileSizeBytes = 26_214_400;
@@ -110,6 +114,16 @@ public class DistributedFsProperties {
         this.storageBackend = storageBackend == null
             ? null
             : storageBackend.strip().toLowerCase();
+    }
+
+    public BootstrapAdminProperties getBootstrapAdmin() {
+        return bootstrapAdmin;
+    }
+
+    public void setBootstrapAdmin(BootstrapAdminProperties bootstrapAdmin) {
+        this.bootstrapAdmin = bootstrapAdmin == null
+            ? new BootstrapAdminProperties()
+            : bootstrapAdmin;
     }
 
     public long getMaxFileSizeBytes() {
@@ -234,6 +248,17 @@ public class DistributedFsProperties {
                 throw new IllegalArgumentException("failureDomains cannot contain blank values");
             }
         }
+        boolean hasBootstrapAdminEmail = bootstrapAdmin != null
+            && bootstrapAdmin.email != null
+            && !bootstrapAdmin.email.isBlank();
+        boolean hasBootstrapAdminPassword = bootstrapAdmin != null
+            && bootstrapAdmin.password != null
+            && !bootstrapAdmin.password.isBlank();
+        if (hasBootstrapAdminEmail != hasBootstrapAdminPassword) {
+            throw new IllegalArgumentException(
+                "bootstrapAdmin.email and bootstrapAdmin.password must be configured together"
+            );
+        }
         if (STORAGE_BACKEND_ORACLE_OBJECT_STORAGE.equals(normalizedStorageBackend)) {
             OracleObjectStorageProperties oracleProperties = oracleObjectStorage;
             if (oracleProperties == null) {
@@ -265,6 +290,31 @@ public class DistributedFsProperties {
                     "oracleObjectStorage.configProfile must be non-blank when provided"
                 );
             }
+        }
+    }
+
+    public static class BootstrapAdminProperties {
+
+        private String email = "";
+
+        private String password = "";
+
+        public String getEmail() {
+            return email;
+        }
+
+        public void setEmail(String email) {
+            this.email = email == null
+                ? ""
+                : email.strip().toLowerCase(Locale.ROOT);
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password == null ? "" : password;
         }
     }
 

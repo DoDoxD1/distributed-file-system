@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -72,6 +73,14 @@ public class ServiceConfiguration {
             timeProvider,
             properties.getAccessTokenTtlSeconds(),
             properties.getRefreshTokenTtlSeconds()
+        );
+    }
+
+    @Bean
+    public ApplicationRunner bootstrapAdminRunner(AuthenticationService authenticationService) {
+        return arguments -> authenticationService.ensureBootstrapAdmin(
+            properties.getBootstrapAdmin().getEmail(),
+            properties.getBootstrapAdmin().getPassword()
         );
     }
 

@@ -5,6 +5,9 @@ distributed:
     gc-retention-seconds: 3600
     node-count: 4
     storage-backend: ${DISTRIBUTED_FS_STORAGE_BACKEND:local}
+    bootstrap-admin:
+      email: ${DISTRIBUTED_FS_BOOTSTRAP_ADMIN_EMAIL:}
+      password: ${DISTRIBUTED_FS_BOOTSTRAP_ADMIN_PASSWORD:}
     max-file-size-bytes: 26214400
     max-user-storage-bytes: 1073741824
     access-token-ttl-seconds: 900
