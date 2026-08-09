@@ -35,7 +35,7 @@ The implementation preserves control-plane/data-plane separation:
 - `com.distributedfs.cluster`
   - `LocalCluster`, `LocalClusterFactory`
 - `com.distributedfs.api`
-  - `AuthController`, `FileController`, `WorkerController`, `AuthenticationInterceptor`, `RequestUserContext`, `GlobalExceptionHandler`
+  - `AuthController`, `FileController`, `WorkerController`, `AuthenticationInterceptor`, `WorkerAuthorizationInterceptor`, `RequestUserContext`, `GlobalExceptionHandler`
 
 ## Data flow details
 
@@ -58,7 +58,9 @@ The implementation preserves control-plane/data-plane separation:
 3. `AuthController` returns the access token in JSON and writes the refresh token as an `HttpOnly` cookie.
 4. `AuthenticationService.refresh()` validates the refresh token, rotates both tokens, and invalidates the previous refresh token.
 5. `AuthenticationInterceptor` hashes bearer access tokens, resolves the active access session, and stores the authenticated user on the request.
-6. Expired access or refresh tokens are removed eagerly during authentication/refresh.
+6. `ServiceConfiguration` calls `AuthenticationService.ensureBootstrapAdmin()` at startup to seed the single admin account from `distributed.fs.bootstrap-admin.*` when needed.
+7. `WorkerAuthorizationInterceptor` allows worker requests only when the authenticated user carries the persisted admin flag.
+8. Expired access or refresh tokens are removed eagerly during authentication/refresh.
 
 ### Download
 
@@ -114,7 +116,7 @@ Per repository policy, runtime-overridable values are centralized.
 | Config module/file | Purpose | Runtime keys |
 | --- | --- | --- |
 | `src/main/resources/application.yml` | Default distributed FS runtime values and optional local secret import | `distributed.fs.*`, `spring.config.import` |
-| `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.storage-backend`, `distributed.fs.max-file-size-bytes`, `distributed.fs.max-user-storage-bytes`, `distributed.fs.access-token-ttl-seconds`, `distributed.fs.refresh-token-ttl-seconds`, `distributed.fs.refresh-cookie-name`, `distributed.fs.refresh-cookie-path`, `distributed.fs.refresh-cookie-secure`, `distributed.fs.refresh-cookie-same-site`, `distributed.fs.storage-root`, `distributed.fs.oracle-object-storage.namespace`, `distributed.fs.oracle-object-storage.bucket`, `distributed.fs.oracle-object-storage.object-prefix`, `distributed.fs.oracle-object-storage.config-file-path`, `distributed.fs.oracle-object-storage.config-profile`, `distributed.fs.oracle-object-storage.connection-timeout-millis`, `distributed.fs.oracle-object-storage.read-timeout-millis`, `distributed.fs.oracle-object-storage.max-retries`, `distributed.fs.oracle-object-storage.initial-backoff-millis`, `distributed.fs.failure-domains` |
+| `com.distributedfs.config.DistributedFsProperties` | Typed config binding and cross-field validation | `distributed.fs.chunk-size-bytes`, `distributed.fs.replication-factor`, `distributed.fs.gc-retention-seconds`, `distributed.fs.node-count`, `distributed.fs.storage-backend`, `distributed.fs.bootstrap-admin.email`, `distributed.fs.bootstrap-admin.password`, `distributed.fs.max-file-size-bytes`, `distributed.fs.max-user-storage-bytes`, `distributed.fs.access-token-ttl-seconds`, `distributed.fs.refresh-token-ttl-seconds`, `distributed.fs.refresh-cookie-name`, `distributed.fs.refresh-cookie-path`, `distributed.fs.refresh-cookie-secure`, `distributed.fs.refresh-cookie-same-site`, `distributed.fs.storage-root`, `distributed.fs.oracle-object-storage.namespace`, `distributed.fs.oracle-object-storage.bucket`, `distributed.fs.oracle-object-storage.object-prefix`, `distributed.fs.oracle-object-storage.config-file-path`, `distributed.fs.oracle-object-storage.config-profile`, `distributed.fs.oracle-object-storage.connection-timeout-millis`, `distributed.fs.oracle-object-storage.read-timeout-millis`, `distributed.fs.oracle-object-storage.max-retries`, `distributed.fs.oracle-object-storage.initial-backoff-millis`, `distributed.fs.failure-domains` |
 | `src/main/resources/application.yml` | Metadata datasource and pool configuration | `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password`, `spring.datasource.driver-class-name`, `spring.datasource.hikari.maximum-pool-size`, `spring.datasource.hikari.connection-timeout`, `spring.datasource.hikari.data-source-properties.sslmode` |
 | `src/main/resources/application.yml` | Flyway migration configuration | `spring.flyway.enabled`, `spring.flyway.locations` |
 | `src/main/resources/application.yml` | Swagger/OpenAPI endpoint configuration | `springdoc.api-docs.path`, `springdoc.swagger-ui.path`, `springdoc.swagger-ui.operations-sorter`, `springdoc.swagger-ui.tags-sorter`, `springdoc.swagger-ui.display-request-duration` |
@@ -179,7 +181,7 @@ Fallback local metadata environment variables remain supported:
 
 ### Worker API (`/api/v1/workers`)
 
-- all requests require `Authorization: Bearer <token>`
+- all requests require `Authorization: Bearer <token>` from the bootstrap admin user
 - `POST /api/v1/workers/scan`
 - `POST /api/v1/workers/repair`
 - `POST /api/v1/workers/gc?referenceTime=<ISO-8601>`
@@ -220,7 +222,9 @@ Current tests validate behavior changes requested in `plan.md`:
   - Oracle-backed node read/write/list/delete behavior and object-prefix handling
 - `DistributedFsPropertiesTest`
   - backend-selection validation for Oracle Object Storage configuration
+  - bootstrap-admin configuration validation and normalization
 - `WorkerControllerIntegrationTest`
+  - bootstrap-admin-only worker authorization
   - authenticated migration endpoint behavior when the Oracle backend is not active
 
 Tests are integration-style using `LocalClusterFactory` with per-test temporary storage directories and a file-backed H2 metadata database migrated with Flyway.
@@ -229,12 +233,13 @@ Tests are integration-style using `LocalClusterFactory` with per-test temporary 
 
 - Metadata durability depends on the configured relational database instance; the single app host still coordinates all worker execution and API traffic.
 - Worker scheduling is manual/API-triggered; no periodic scheduler yet.
-- Worker endpoints require authentication, but they are not yet restricted to an admin-only role.
 - No rate limiting/backpressure controls yet.
+- File upload and download bytes still transit the API process instead of going directly between client and object storage.
 
 Natural next hardening milestones:
 
 1. Persist metadata in a consensus-backed store.
 2. Add health scoring and rebalancing logic.
 3. Add quotas, admission control, and rate limiting.
-4. Add background scheduling, worker authorization, and metrics export.
+4. Add background scheduling and metrics export.
+5. Add pre-signed object-storage upload and download flows so clients can transfer large files directly and the API can focus on auth, manifest validation, and commit.

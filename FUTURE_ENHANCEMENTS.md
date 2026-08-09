@@ -20,8 +20,8 @@ The system already provides:
 The main reasons this should still be treated as an MVP are:
 
 - Worker execution is manual and API-triggered instead of scheduled
-- Worker endpoints are authenticated, but they are not yet restricted to administrators
 - Oracle Object Storage cutovers still rely on an operator-triggered migration step
+- File uploads and downloads still pass through the API process instead of using direct client-to-bucket transfer
 - Rate limiting and admission control are not implemented
 - Operational observability is still limited
 - Recovery and deployment runbooks need to be formalized
@@ -58,7 +58,6 @@ Goal: improve resilience against misuse and strengthen trust boundaries.
 - Add audit-friendly security logging for login, refresh, and worker invocations
 - Review CORS and cookie policy for cross-origin deployments
 - Add stronger operational guidance around secrets, credential rotation, and least-privilege database access
-- Add an admin-only authorization layer for `WorkerController` endpoints so maintenance APIs are not callable by every authenticated user
 - Extend role-based authorization to future administrative endpoints
 
 ### Phase 4: Observability and operations
@@ -75,6 +74,7 @@ Goal: make failures visible and diagnosable without manual digging.
 
 Goal: improve adoption, usability, and day-2 developer experience.
 
+- Add pre-signed object-storage upload and download flows so the client can transfer large files directly and the API can focus on auth, manifest validation, and commit
 - Publish a maintained Postman collection for auth and file flows
 - Document example client flows for register, login, refresh, upload, and download
 - Improve error response consistency and troubleshooting guidance
@@ -85,8 +85,8 @@ Goal: improve adoption, usability, and day-2 developer experience.
 
 If only a few items are implemented next, these would likely provide the biggest return:
 
-1. Add admin-only authorization for worker endpoints
-2. Add scheduled background workers and cron-style execution control
+1. Add scheduled background workers and cron-style execution control
+2. Add pre-signed upload and download flows for direct client-to-bucket transfer
 3. Add deployment and recovery runbooks
 4. Add rate limiting to auth and upload APIs
 5. Add metrics, alerts, and structured operational logs
@@ -96,6 +96,7 @@ If only a few items are implemented next, these would likely provide the biggest
 For a more production-oriented distributed storage system, the longer horizon could include:
 
 - Automated cutover tooling for legacy local chunks after a backend switch
+- Direct-to-bucket transfer for large objects with API-issued pre-signed URLs and manifest finalization
 - Multi-host or externalized chunk storage instead of single-host local disk
 - Better health-aware or load-aware placement decisions
 - Metadata snapshots and stronger disaster recovery guarantees

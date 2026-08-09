@@ -13,7 +13,8 @@ This project demonstrates my approach to designing and delivering robust backend
 - Added rack-aware replica placement and durability checks before publish.
 - Designed maintenance workers for replica scan, under-replication repair, retention-based
   garbage collection, and legacy local-to-bucket chunk migration.
-- Added hybrid auth with short-lived access tokens, secure refresh cookies, and per-user file namespaces.
+- Added hybrid auth with short-lived access tokens, secure refresh cookies, per-user file namespaces,
+  and bootstrap-admin-only worker execution.
 - Exposed REST APIs with centralized exception mapping and boundary validation.
 - Added a pluggable chunk-storage layer with both local filesystem and Oracle Object Storage backends.
 - Added interactive Swagger UI and OpenAPI docs for quick API exploration.
@@ -66,6 +67,9 @@ This project demonstrates my approach to designing and delivering robust backend
 - `POST /api/v1/auth/login` rotates to a fresh access token plus refresh token cookie for an existing user.
 - `POST /api/v1/auth/refresh` exchanges the refresh cookie for a new access token and rotated refresh cookie.
 - File and worker APIs require `Authorization: Bearer <token>`.
+- Startup seeds a single bootstrap admin user from `distributed.fs.bootstrap-admin.email` and
+  `distributed.fs.bootstrap-admin.password` when no admin exists yet.
+- Worker endpoints are restricted to that bootstrap admin user through the persisted `is_admin` flag.
 - Logical file paths are isolated per user, so two users can both store `/docs/report.txt`
   independently.
 - Access tokens live 15 minutes by default and refresh tokens live 24 hours by default.
@@ -96,7 +100,7 @@ Base path: `/api/v1`
 
 ### Workers
 
-- Worker endpoints require `Authorization: Bearer <token>`.
+- Worker endpoints require `Authorization: Bearer <token>` from the bootstrap admin user.
 - `POST /workers/scan`
 - `POST /workers/repair`
 - `POST /workers/gc`
@@ -138,6 +142,8 @@ Supported keys under `distributed.fs`:
 - `gc-retention-seconds`
 - `node-count`
 - `storage-backend`
+- `bootstrap-admin.email`
+- `bootstrap-admin.password`
 - `max-file-size-bytes`
 - `max-user-storage-bytes`
 - `access-token-ttl-seconds`
@@ -214,5 +220,16 @@ Typical Oracle VM deployment shape for this project:
 
 - Metadata is durable in PostgreSQL, but overall system availability still depends on the single app host and the chosen chunk backend configuration.
 - Worker execution is API-triggered, not scheduled.
-- Worker endpoints are authenticated, but they are not yet restricted to an admin-only role.
 - Metadata replication and consensus are not included yet.
+- File uploads and downloads still proxy payload bytes through the API process instead of using direct bucket transfer.
+
+## Future enhancements
+
+- Replace API-proxied large file transfer with a pre-signed upload flow:
+  - client requests an upload session from the API
+  - API returns a pre-signed object-storage URL plus expected metadata
+  - client uploads bytes directly to the storage bucket
+  - API finalizes the manifest after validating the uploaded object
+- Add scheduled worker execution so scan, repair, and GC can run without manual API calls.
+- Add metadata replication and consensus for control-plane durability.
+- Add rate limiting, quotas, and admission control for large or concurrent uploads.
