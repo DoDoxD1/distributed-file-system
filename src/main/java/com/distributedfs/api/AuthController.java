@@ -6,6 +6,7 @@ import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.error.AuthenticationException;
 import com.distributedfs.model.AuthenticatedSession;
 import com.distributedfs.service.AuthenticationService;
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -33,6 +34,10 @@ public class AuthController {
         this.properties = properties;
     }
 
+    @Operation(
+        summary = "Register a new user",
+        description = "Creates a user account, returns a bearer access token, and sets a refresh-token cookie."
+    )
     @PostMapping(value = "/register", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public AuthResponse register(
         @Valid @RequestBody CredentialsRequest request,
@@ -46,6 +51,10 @@ public class AuthController {
         return AuthResponse.fromSession(session);
     }
 
+    @Operation(
+        summary = "Log in an existing user",
+        description = "Authenticates the supplied credentials, returns a fresh bearer access token, and rotates the refresh-token cookie."
+    )
     @PostMapping(value = "/login", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public AuthResponse login(
         @Valid @RequestBody CredentialsRequest request,
@@ -59,6 +68,10 @@ public class AuthController {
         return AuthResponse.fromSession(session);
     }
 
+    @Operation(
+        summary = "Refresh an access token",
+        description = "Reads the refresh-token cookie, issues a new bearer access token, and rotates the refresh-token cookie."
+    )
     @PostMapping(value = "/refresh", produces = MediaType.APPLICATION_JSON_VALUE)
     public AuthResponse refresh(
         HttpServletRequest request,

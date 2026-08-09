@@ -14,6 +14,7 @@ import com.distributedfs.model.AuthenticatedUser;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
 import com.distributedfs.service.UserFileService;
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -49,6 +50,10 @@ public class FileController {
         this.properties = properties;
     }
 
+    @Operation(
+        summary = "Upload a file",
+        description = "Stores a base64-encoded file payload for the authenticated user, creating a new immutable version."
+    )
     @PostMapping(
         consumes = MediaType.APPLICATION_JSON_VALUE,
         produces = MediaType.APPLICATION_JSON_VALUE
@@ -69,6 +74,10 @@ public class FileController {
         return new UploadFileResponse(FileManifestResponse.fromManifest(manifest));
     }
 
+    @Operation(
+        summary = "Download file content",
+        description = "Returns the requested file version as a base64-encoded payload for the authenticated user."
+    )
     @GetMapping(value = "/content", produces = MediaType.APPLICATION_JSON_VALUE)
     public DownloadFileResponse downloadFile(
         HttpServletRequest httpRequest,
@@ -81,6 +90,10 @@ public class FileController {
         return new DownloadFileResponse(logicalPath, versionId, payloadBase64);
     }
 
+    @Operation(
+        summary = "Get file metadata",
+        description = "Fetches the manifest for the latest or requested file version, with optional inclusion of deleted versions."
+    )
     @GetMapping(value = "/manifest", produces = MediaType.APPLICATION_JSON_VALUE)
     public FileManifestResponse getManifest(
         HttpServletRequest httpRequest,
@@ -98,6 +111,10 @@ public class FileController {
         return FileManifestResponse.fromManifest(manifest);
     }
 
+    @Operation(
+        summary = "Delete a file version",
+        description = "Marks the latest or requested file version as deleted for the authenticated user and releases its chunk references."
+    )
     @DeleteMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public DeleteFileResponse deleteFile(
         HttpServletRequest httpRequest,
@@ -109,6 +126,10 @@ public class FileController {
         return new DeleteFileResponse(FileManifestResponse.fromManifest(deleted));
     }
 
+    @Operation(
+        summary = "List files",
+        description = "Lists active files in the authenticated user's namespace, optionally filtered by a logical-path prefix."
+    )
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public List<FileListingResponse> listFiles(
         HttpServletRequest httpRequest,
@@ -119,6 +140,10 @@ public class FileController {
         return listings.stream().map(FileListingResponse::fromListing).toList();
     }
 
+    @Operation(
+        summary = "List file versions",
+        description = "Returns the active version history for a logical file path in the authenticated user's namespace."
+    )
     @GetMapping(value = "/versions/{encodedPath}", produces = MediaType.APPLICATION_JSON_VALUE)
     public List<FileManifestResponse> listVersions(
         HttpServletRequest httpRequest,
