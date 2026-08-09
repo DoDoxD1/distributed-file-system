@@ -39,6 +39,10 @@ services:
       - type: bind
         source: ${DISTRIBUTED_FS_STORAGE_HOST_PATH:-./data/chunks}
         target: ${DISTRIBUTED_FS_STORAGE_ROOT:-/data/chunks}
+      - type: bind
+        source: /opt/oracle
+        target: /opt/oracle
+        read_only: true
     ports:
       - "8080:8080"
     expose:
