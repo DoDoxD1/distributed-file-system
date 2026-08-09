@@ -6,6 +6,7 @@ import com.distributedfs.error.ValidationException;
 import com.distributedfs.service.BackgroundWorkerService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import org.springframework.http.MediaType;
@@ -20,6 +21,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/workers")
 @SecurityRequirement(name = OpenApiConfiguration.BEARER_AUTH_SCHEME)
+@Tag(
+    name = "Workers",
+    description = "Admin-only maintenance endpoints that require an authenticated bootstrap admin user."
+)
 public class WorkerController {
 
     private final BackgroundWorkerService backgroundWorkerService;
@@ -30,7 +35,7 @@ public class WorkerController {
 
     @Operation(
         summary = "Scan replica metadata",
-        description = "Checks recorded chunk replicas and removes metadata references for replicas that are missing or corrupted."
+        description = "Checks recorded chunk replicas and removes metadata references for replicas that are missing or corrupted. Requires the authenticated bootstrap admin user."
     )
     @PostMapping(value = "/scan", produces = MediaType.APPLICATION_JSON_VALUE)
     public WorkerRunResponse scanAndPrune() {
@@ -40,7 +45,7 @@ public class WorkerController {
 
     @Operation(
         summary = "Repair under-replicated chunks",
-        description = "Copies chunk data onto additional healthy nodes until the configured replication target is restored where possible."
+        description = "Copies chunk data onto additional healthy nodes until the configured replication target is restored where possible. Requires the authenticated bootstrap admin user."
     )
     @PostMapping(value = "/repair", produces = MediaType.APPLICATION_JSON_VALUE)
     public WorkerRunResponse repairUnderReplicatedChunks() {
@@ -50,7 +55,7 @@ public class WorkerController {
 
     @Operation(
         summary = "Garbage collect deleted chunks",
-        description = "Deletes unreferenced chunk data and purges chunk metadata records after the configured retention window."
+        description = "Deletes unreferenced chunk data and purges chunk metadata records after the configured retention window. Requires the authenticated bootstrap admin user."
     )
     @PostMapping(value = "/gc", produces = MediaType.APPLICATION_JSON_VALUE)
     public WorkerRunResponse garbageCollect(
@@ -63,7 +68,7 @@ public class WorkerController {
 
     @Operation(
         summary = "Migrate legacy local chunks",
-        description = "This project initially leveraged local storage for chunk persistence, and this endpoint migrates those legacy local chunk files into the configured Oracle Object Storage backend, removing the local source after a successful write."
+        description = "This project initially leveraged local storage for chunk persistence, and this endpoint migrates those legacy local chunk files into the configured Oracle Object Storage backend, removing the local source after a successful write. Requires the authenticated bootstrap admin user."
     )
     @PostMapping(value = "/migrate-local-chunks", produces = MediaType.APPLICATION_JSON_VALUE)
     public WorkerRunResponse migrateLocalChunksToBucket() {
