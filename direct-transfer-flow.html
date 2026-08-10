@@ -1,0 +1,1342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Direct Transfer Flow</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #07111f;
+            --bg-soft: #0d1b2f;
+            --panel: rgba(10, 19, 35, 0.84);
+            --panel-strong: rgba(9, 16, 28, 0.96);
+            --line: rgba(148, 163, 184, 0.18);
+            --text: #e5eefc;
+            --muted: #9fb2cf;
+            --accent: #60a5fa;
+            --accent-2: #22c55e;
+            --accent-3: #f59e0b;
+            --accent-4: #ef4444;
+            --shadow: 0 24px 60px rgba(2, 8, 23, 0.45);
+            --radius: 22px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Inter, Segoe UI, Arial, sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(96, 165, 250, 0.18), transparent 30%),
+                radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 26%),
+                linear-gradient(180deg, #06111e 0%, #091423 35%, #07111f 100%);
+        }
+
+        .shell {
+            width: min(1220px, calc(100% - 32px));
+            margin: 32px auto 56px;
+        }
+
+        .hero,
+        .panel,
+        .summary-card,
+        .legend,
+        .data-card,
+        .slice-card {
+            backdrop-filter: blur(18px);
+            background: var(--panel);
+            border: 1px solid var(--line);
+            box-shadow: var(--shadow);
+        }
+
+        .hero {
+            border-radius: 28px;
+            padding: 28px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .hero::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(96, 165, 250, 0.18), rgba(34, 197, 94, 0.08) 45%, rgba(245, 158, 11, 0.08));
+            pointer-events: none;
+        }
+
+        .hero > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: rgba(96, 165, 250, 0.12);
+            color: #bfdbfe;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin: 18px 0 14px;
+            font-size: clamp(32px, 5vw, 54px);
+            line-height: 1.02;
+        }
+
+        .lead {
+            max-width: 860px;
+            margin: 0;
+            font-size: 18px;
+            line-height: 1.65;
+            color: var(--muted);
+        }
+
+        .pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 22px;
+        }
+
+        .pill {
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            background: rgba(8, 15, 27, 0.76);
+            color: #dbeafe;
+            border-radius: 999px;
+            padding: 10px 14px;
+            font-size: 14px;
+        }
+
+        .section-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: end;
+            margin: 34px 0 16px;
+        }
+
+        .section-head h2 {
+            margin: 0;
+            font-size: 24px;
+        }
+
+        .section-head p {
+            margin: 0;
+            color: var(--muted);
+            max-width: 720px;
+            line-height: 1.55;
+        }
+
+        .summary-grid,
+        .data-grid,
+        .slice-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+        }
+
+        .summary-card,
+        .data-card,
+        .slice-card {
+            border-radius: var(--radius);
+            padding: 20px;
+        }
+
+        .summary-card h3,
+        .data-card h3,
+        .slice-card h3 {
+            margin: 0 0 10px;
+            font-size: 18px;
+        }
+
+        .summary-card p,
+        .data-card p,
+        .slice-card p,
+        .summary-card li,
+        .data-card li,
+        .slice-card li {
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .summary-card ul,
+        .data-card ul,
+        .slice-card ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .tab-button {
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            background: rgba(8, 15, 27, 0.66);
+            color: #cbd5e1;
+            border-radius: 14px;
+            padding: 12px 16px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: 160ms ease;
+        }
+
+        .tab-button:hover {
+            transform: translateY(-1px);
+            border-color: rgba(96, 165, 250, 0.45);
+        }
+
+        .tab-button.active {
+            background: linear-gradient(135deg, rgba(96, 165, 250, 0.22), rgba(34, 197, 94, 0.18));
+            color: #eff6ff;
+            border-color: rgba(96, 165, 250, 0.42);
+        }
+
+        .panel {
+            display: none;
+            border-radius: 28px;
+            padding: 24px;
+        }
+
+        .panel.active {
+            display: block;
+        }
+
+        .panel-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 18px;
+        }
+
+        .subpanel {
+            background: var(--panel-strong);
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            padding: 18px;
+        }
+
+        .subpanel h3 {
+            margin: 0 0 8px;
+            font-size: 18px;
+        }
+
+        .subpanel p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.58;
+        }
+
+        .flow {
+            display: grid;
+            gap: 12px;
+            margin-top: 18px;
+        }
+
+        .flow-step {
+            position: relative;
+            border-radius: 18px;
+            padding: 16px 16px 16px 18px;
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(9, 16, 28, 0.96));
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            min-height: 88px;
+        }
+
+        .flow-step::after {
+            content: "↓";
+            position: absolute;
+            left: 50%;
+            bottom: -20px;
+            transform: translateX(-50%);
+            color: rgba(191, 219, 254, 0.7);
+            font-size: 20px;
+        }
+
+        .flow-step:last-child::after {
+            display: none;
+        }
+
+        .flow-step.current {
+            border-left: 4px solid var(--accent-4);
+        }
+
+        .flow-step.future {
+            border-left: 4px solid var(--accent-2);
+        }
+
+        .flow-step.data {
+            border-left: 4px solid var(--accent);
+        }
+
+        .flow-step.warn {
+            border-left: 4px solid var(--accent-3);
+        }
+
+        .step-title {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .step-title strong {
+            font-size: 15px;
+        }
+
+        .tag {
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-weight: 800;
+        }
+
+        .tag.api {
+            background: rgba(239, 68, 68, 0.12);
+            color: #fca5a5;
+        }
+
+        .tag.bucket {
+            background: rgba(34, 197, 94, 0.14);
+            color: #bbf7d0;
+        }
+
+        .tag.client {
+            background: rgba(96, 165, 250, 0.14);
+            color: #bfdbfe;
+        }
+
+        .tag.meta {
+            background: rgba(245, 158, 11, 0.14);
+            color: #fde68a;
+        }
+
+        .formula {
+            display: grid;
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .formula-card {
+            border-radius: 20px;
+            padding: 18px;
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            background: rgba(8, 15, 27, 0.82);
+        }
+
+        .formula-card code,
+        .data-card code,
+        .slice-card code,
+        .summary-card code,
+        .diagram-card code {
+            color: #bfdbfe;
+            background: rgba(15, 23, 42, 0.78);
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            padding: 2px 6px;
+            border-radius: 8px;
+        }
+
+        .formula-value {
+            margin-top: 10px;
+            font-size: clamp(20px, 4vw, 32px);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        .legend {
+            margin-top: 18px;
+            border-radius: 20px;
+            padding: 16px 18px;
+        }
+
+        .legend-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px 18px;
+            margin-top: 10px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 999px;
+        }
+
+        .dot.red { background: var(--accent-4); }
+        .dot.green { background: var(--accent-2); }
+        .dot.blue { background: var(--accent); }
+        .dot.gold { background: var(--accent-3); }
+
+        .diagram-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 18px;
+        }
+
+        .diagram-card {
+            backdrop-filter: blur(18px);
+            background: var(--panel);
+            border: 1px solid var(--line);
+            box-shadow: var(--shadow);
+            border-radius: 24px;
+            padding: 20px;
+        }
+
+        .diagram-card.current-choice {
+            border-color: rgba(239, 68, 68, 0.32);
+        }
+
+        .diagram-card.selected {
+            border-color: rgba(34, 197, 94, 0.34);
+            box-shadow: 0 24px 60px rgba(2, 8, 23, 0.45), 0 0 0 1px rgba(34, 197, 94, 0.12);
+        }
+
+        .diagram-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 14px;
+            align-items: start;
+        }
+
+        .diagram-top h3 {
+            margin: 0;
+            font-size: 19px;
+        }
+
+        .diagram-card p,
+        .diagram-card li {
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .diagram-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 7px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .diagram-badge.current {
+            background: rgba(239, 68, 68, 0.12);
+            color: #fca5a5;
+        }
+
+        .diagram-badge.selected {
+            background: rgba(34, 197, 94, 0.14);
+            color: #bbf7d0;
+        }
+
+        .diagram-badge.alternative {
+            background: rgba(96, 165, 250, 0.14);
+            color: #bfdbfe;
+        }
+
+        .diagram-lane {
+            display: grid;
+            gap: 14px;
+            margin-top: 16px;
+        }
+
+        .diagram-track {
+            display: flex;
+            align-items: stretch;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .diagram-track-label {
+            width: 78px;
+            padding-top: 8px;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #cbd5e1;
+        }
+
+        .diagram-node {
+            flex: 1 1 135px;
+            min-height: 74px;
+            border-radius: 18px;
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            background: rgba(8, 15, 27, 0.84);
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .diagram-node strong {
+            font-size: 14px;
+        }
+
+        .diagram-node small {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .diagram-node.client-plane {
+            border-color: rgba(96, 165, 250, 0.24);
+        }
+
+        .diagram-node.control-plane {
+            border-color: rgba(239, 68, 68, 0.22);
+        }
+
+        .diagram-node.data-plane {
+            border-color: rgba(34, 197, 94, 0.22);
+        }
+
+        .diagram-node.meta-plane {
+            border-color: rgba(245, 158, 11, 0.22);
+        }
+
+        .diagram-node.worker-plane {
+            border-color: rgba(168, 85, 247, 0.24);
+        }
+
+        .diagram-arrow {
+            align-self: center;
+            font-size: 22px;
+            color: rgba(191, 219, 254, 0.72);
+            padding: 0 2px;
+        }
+
+        .diagram-caption {
+            margin-top: 16px;
+            padding-top: 14px;
+            border-top: 1px solid rgba(148, 163, 184, 0.12);
+        }
+
+        .diagram-caption strong {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .diagram-caption ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+            margin-top: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 680px;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 12px 14px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+            vertical-align: top;
+        }
+
+        th {
+            color: #dbeafe;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        td {
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .footer-note {
+            margin-top: 24px;
+            color: var(--muted);
+            line-height: 1.65;
+            font-size: 15px;
+        }
+
+        @media (max-width: 760px) {
+            .shell {
+                width: min(100% - 18px, 100%);
+                margin: 18px auto 32px;
+            }
+
+            .hero,
+            .panel,
+            .summary-card,
+            .data-card,
+            .slice-card,
+            .legend {
+                border-radius: 20px;
+            }
+
+            .hero,
+            .panel {
+                padding: 18px;
+            }
+
+            .section-head {
+                flex-direction: column;
+                align-items: start;
+            }
+
+            .diagram-track-label {
+                width: 100%;
+                padding-top: 0;
+            }
+
+            .diagram-arrow {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <section class="hero">
+            <div class="eyebrow">Distributed file storage · direct transfer architecture</div>
+            <h1>Move file bytes out of the API server</h1>
+            <p class="lead">
+                The current upload path forces the API to receive the full file, decode it, chunk it, write replicas,
+                and rebuild the file again on download. The target design keeps the API as the control plane for auth,
+                ownership, validation, and metadata, while the storage bucket becomes the data plane for upload and download.
+            </p>
+            <div class="pill-row">
+                <div class="pill">Current bottleneck: API-side chunking</div>
+                <div class="pill">Target: signed bucket upload and download</div>
+                <div class="pill">Dedup scope: per user</div>
+                <div class="pill">Dedup key: <code>(owner_user_id, sha256, size_bytes)</code></div>
+            </div>
+        </section>
+
+        <div class="section-head">
+            <div>
+                <h2>At a glance</h2>
+            </div>
+            <p>
+                Read this left to right: what happens now, what changes in the future flow, and how user-level dedup prevents the same user from storing identical bytes twice.
+            </p>
+        </div>
+
+        <section class="summary-grid">
+            <article class="summary-card">
+                <h3>Current architecture</h3>
+                <ul>
+                    <li>Client sends full file bytes to the API as <code>payloadBase64</code>.</li>
+                    <li>API decodes the file and chunks it inside <code>GatewayService.uploadFile()</code>.</li>
+                    <li>Download reverses the flow: the API reads chunks, reconstructs the file, and sends it back.</li>
+                </ul>
+            </article>
+            <article class="summary-card">
+                <h3>Target architecture</h3>
+                <ul>
+                    <li>Client asks the API for a short-lived signed URL.</li>
+                    <li>Client uploads or downloads bytes directly from the object storage bucket.</li>
+                    <li>API still owns auth, metadata commit, namespace isolation, and validation.</li>
+                </ul>
+            </article>
+            <article class="summary-card">
+                <h3>User-level dedup</h3>
+                <ul>
+                    <li>The same user reuses an existing object when <code>sha256</code> and size match.</li>
+                    <li>Two different users do not share the same physical object.</li>
+                    <li>Logical paths and versions point to stored objects through metadata.</li>
+                </ul>
+            </article>
+        </section>
+
+        <div class="section-head">
+            <div>
+                <h2>Flow view</h2>
+            </div>
+            <p>
+                Switch between the current request path, the direct-transfer path, and the per-user dedup model. Each card shows who owns the step and where the bytes move.
+            </p>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Flow tabs">
+            <button class="tab-button active" data-tab="current" type="button">Current API flow</button>
+            <button class="tab-button" data-tab="future" type="button">Future direct transfer</button>
+            <button class="tab-button" data-tab="dedup" type="button">User-level dedup</button>
+        </div>
+
+        <section id="current" class="panel active" role="tabpanel">
+            <div class="panel-grid">
+                <article class="subpanel">
+                    <h3>Upload today</h3>
+                    <p>The API handles both the control plane and the file bytes. This is why upload cost scales with file size.</p>
+                    <div class="flow">
+                        <div class="flow-step current">
+                            <div class="step-title">
+                                <strong>1. Client sends full file payload to <code>POST /api/v1/files</code></strong>
+                                <span class="tag client">client</span>
+                            </div>
+                            <div>The request carries <code>payloadBase64</code>, logical path, and optional idempotency key.</div>
+                        </div>
+                        <div class="flow-step current">
+                            <div class="step-title">
+                                <strong>2. API authenticates and validates request size</strong>
+                                <span class="tag api">api</span>
+                            </div>
+                            <div><code>FileController</code> decodes and size-checks the file before calling the service layer.</div>
+                        </div>
+                        <div class="flow-step current">
+                            <div class="step-title">
+                                <strong>3. API splits the file into chunks</strong>
+                                <span class="tag api">api</span>
+                            </div>
+                            <div><code>GatewayService.uploadFile()</code> computes checksums, chunks the file, and picks replica nodes.</div>
+                        </div>
+                        <div class="flow-step current">
+                            <div class="step-title">
+                                <strong>4. API writes each chunk to storage nodes</strong>
+                                <span class="tag bucket">storage</span>
+                            </div>
+                            <div>Replica writes happen from the API process to the configured storage backend.</div>
+                        </div>
+                        <div class="flow-step warn">
+                            <div class="step-title">
+                                <strong>5. API commits manifest after all bytes have passed through it</strong>
+                                <span class="tag meta">metadata</span>
+                            </div>
+                            <div>Control-plane work and data-plane work are coupled in the same request path.</div>
+                        </div>
+                    </div>
+                </article>
+                <article class="subpanel">
+                    <h3>Download today</h3>
+                    <p>The API also reconstructs the file on every download, so large reads hit the app server again.</p>
+                    <div class="flow">
+                        <div class="flow-step current">
+                            <div class="step-title">
+                                <strong>1. Client calls <code>GET /api/v1/files/content</code></strong>
+                                <span class="tag client">client</span>
+                            </div>
+                            <div>The request includes logical path and optional version ID.</div>
+                        </div>
+                        <div class="flow-step current">
+                            <div class="step-title">
+                                <strong>2. API resolves manifest and chunk list</strong>
+                                <span class="tag meta">metadata</span>
+                            </div>
+                            <div>The manifest points to stored chunks and replica node IDs.</div>
+                        </div>
+                        <div class="flow-step current">
+                            <div class="step-title">
+                                <strong>3. API reads chunks and rebuilds the file</strong>
+                                <span class="tag api">api</span>
+                            </div>
+                            <div>The app verifies chunk checksums and reconstructs the full payload in memory.</div>
+                        </div>
+                        <div class="flow-step current">
+                            <div class="step-title">
+                                <strong>4. API returns the file back to the client</strong>
+                                <span class="tag client">client</span>
+                            </div>
+                            <div>The full file leaves storage, enters the API process, and then leaves the API again.</div>
+                        </div>
+                    </div>
+                </article>
+            </div>
+            <div class="legend">
+                <strong>Why this hurts</strong>
+                <div class="legend-grid">
+                    <div class="legend-item"><span class="dot red"></span>API CPU pays for base64, checksum work, and chunking</div>
+                    <div class="legend-item"><span class="dot blue"></span>File bytes cross the app server on every upload and download</div>
+                    <div class="legend-item"><span class="dot gold"></span>Large files increase memory pressure and response time</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="future" class="panel" role="tabpanel">
+            <div class="panel-grid">
+                <article class="subpanel">
+                    <h3>Upload with direct bucket transfer</h3>
+                    <p>The API becomes a gatekeeper instead of a byte relay. It authenticates, plans, signs, verifies, and commits.</p>
+                    <div class="flow">
+                        <div class="flow-step future">
+                            <div class="step-title">
+                                <strong>1. Client requests an upload session</strong>
+                                <span class="tag client">client</span>
+                            </div>
+                            <div>Client sends logical path, size, content type, checksum, and optional idempotency key.</div>
+                        </div>
+                        <div class="flow-step future">
+                            <div class="step-title">
+                                <strong>2. API validates user, path, size, and dedup candidate</strong>
+                                <span class="tag api">api</span>
+                            </div>
+                            <div>If the same user already has the same <code>sha256</code> and size, the API can skip the upload.</div>
+                        </div>
+                        <div class="flow-step data">
+                            <div class="step-title">
+                                <strong>3. API returns a signed <code>PUT</code> URL for a staging key</strong>
+                                <span class="tag bucket">bucket</span>
+                            </div>
+                            <div>Example staging key: <code>users/{userId}/staging/{sessionId}</code>.</div>
+                        </div>
+                        <div class="flow-step data">
+                            <div class="step-title">
+                                <strong>4. Client uploads bytes directly to object storage</strong>
+                                <span class="tag client">client</span>
+                            </div>
+                            <div>The file never passes through the API process.</div>
+                        </div>
+                        <div class="flow-step future">
+                            <div class="step-title">
+                                <strong>5. Client calls complete</strong>
+                                <span class="tag api">api</span>
+                            </div>
+                            <div>API verifies object existence, size, checksum, and then commits metadata.</div>
+                        </div>
+                    </div>
+                </article>
+                <article class="subpanel">
+                    <h3>Download with direct bucket transfer</h3>
+                    <p>The API still checks ownership and version selection, but the bucket serves the actual bytes.</p>
+                    <div class="flow">
+                        <div class="flow-step future">
+                            <div class="step-title">
+                                <strong>1. Client asks for a download URL</strong>
+                                <span class="tag client">client</span>
+                            </div>
+                            <div>The request still uses the logical path and optional version ID.</div>
+                        </div>
+                        <div class="flow-step future">
+                            <div class="step-title">
+                                <strong>2. API resolves manifest and validates ownership</strong>
+                                <span class="tag meta">metadata</span>
+                            </div>
+                            <div>The API maps the logical file to a stored object owned by that user.</div>
+                        </div>
+                        <div class="flow-step data">
+                            <div class="step-title">
+                                <strong>3. API returns a signed <code>GET</code> URL</strong>
+                                <span class="tag bucket">bucket</span>
+                            </div>
+                            <div>The URL is short-lived and scoped to a single object key.</div>
+                        </div>
+                        <div class="flow-step data">
+                            <div class="step-title">
+                                <strong>4. Client downloads bytes directly from object storage</strong>
+                                <span class="tag client">client</span>
+                            </div>
+                            <div>The bucket becomes the data plane for reads.</div>
+                        </div>
+                    </div>
+                </article>
+            </div>
+            <div class="legend">
+                <strong>What stays in the API</strong>
+                <div class="legend-grid">
+                    <div class="legend-item"><span class="dot red"></span>Authentication, namespace isolation, size limits, and session validation</div>
+                    <div class="legend-item"><span class="dot green"></span>Signed URL issuance, finalize checks, and metadata commit</div>
+                    <div class="legend-item"><span class="dot blue"></span>Bucket traffic carries the raw file bytes</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="dedup" class="panel" role="tabpanel">
+            <div class="panel-grid">
+                <article class="subpanel">
+                    <h3>User-level dedup rules</h3>
+                    <p>Same user plus same bytes means one stored object. Different users never share that object.</p>
+                    <div class="formula">
+                        <div class="formula-card">
+                            <strong>Dedup identity</strong>
+                            <div class="formula-value">(owner_user_id, sha256, size_bytes)</div>
+                            <p>If these three values match, the new file version can point to an existing stored object.</p>
+                        </div>
+                        <div class="formula-card">
+                            <strong>Canonical object key</strong>
+                            <div class="formula-value"><code>users/{userId}/objects/sha256/{sha256}</code></div>
+                            <p>The object key is deterministic per user, so repeated uploads converge to the same physical location.</p>
+                        </div>
+                    </div>
+                </article>
+                <article class="subpanel">
+                    <h3>Finalize path with dedup</h3>
+                    <p>The API decides whether to reuse an object or promote the staging upload into a canonical object key.</p>
+                    <div class="flow">
+                        <div class="flow-step future">
+                            <div class="step-title">
+                                <strong>1. Check for an existing stored object for the same user</strong>
+                                <span class="tag meta">metadata</span>
+                            </div>
+                            <div>Lookup by <code>(owner_user_id, sha256, size_bytes)</code>.</div>
+                        </div>
+                        <div class="flow-step future">
+                            <div class="step-title">
+                                <strong>2. If found, skip upload or reuse object immediately</strong>
+                                <span class="tag api">api</span>
+                            </div>
+                            <div>Create a new file version that references the existing object row.</div>
+                        </div>
+                        <div class="flow-step data">
+                            <div class="step-title">
+                                <strong>3. If not found, verify the staging upload and promote it</strong>
+                                <span class="tag bucket">bucket</span>
+                            </div>
+                            <div>Copy or move <code>users/{userId}/staging/{sessionId}</code> into the canonical object key.</div>
+                        </div>
+                        <div class="flow-step warn">
+                            <div class="step-title">
+                                <strong>4. Use a unique constraint to stop race duplicates</strong>
+                                <span class="tag meta">metadata</span>
+                            </div>
+                            <div>Even if two requests race, only one row wins. The loser reuses the winner and deletes its staged upload.</div>
+                        </div>
+                    </div>
+                </article>
+            </div>
+            <div class="legend">
+                <strong>What dedup saves</strong>
+                <div class="legend-grid">
+                    <div class="legend-item"><span class="dot green"></span>Repeated uploads by the same user do not create a second object</div>
+                    <div class="legend-item"><span class="dot gold"></span>Different paths can still point to one stored object</div>
+                    <div class="legend-item"><span class="dot red"></span>Cross-user sharing is intentionally blocked</div>
+                </div>
+            </div>
+        </section>
+
+        <div class="section-head">
+            <div>
+                <h2>Architecture choices</h2>
+            </div>
+            <p>
+                These diagrams compare the current request path with the three future choices we discussed. The selected path is direct object transfer with user-level dedup because it removes the API from the byte path without pushing chunk orchestration into the client.
+            </p>
+        </div>
+
+        <section class="diagram-grid">
+            <article class="diagram-card current-choice">
+                <div class="diagram-top">
+                    <h3>Current model · API chunks every file</h3>
+                    <span class="diagram-badge current">Current</span>
+                </div>
+                <p>The same server handles auth, metadata, chunking, checksums, upload writes, and download reconstruction.</p>
+                <div class="diagram-lane">
+                    <div class="diagram-track">
+                        <div class="diagram-track-label">Upload</div>
+                        <div class="diagram-node client-plane">
+                            <strong>Client</strong>
+                            <small>Sends full <code>payloadBase64</code></small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node control-plane">
+                            <strong>API controller</strong>
+                            <small>Auth, path validation, size checks</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node control-plane">
+                            <strong>Gateway chunker</strong>
+                            <small>Split file, hash chunks, pick replicas</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node data-plane">
+                            <strong>Storage backend</strong>
+                            <small>Chunk writes from the API process</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node meta-plane">
+                            <strong>Metadata DB</strong>
+                            <small>Commit manifest after writes finish</small>
+                        </div>
+                    </div>
+                    <div class="diagram-track">
+                        <div class="diagram-track-label">Download</div>
+                        <div class="diagram-node data-plane">
+                            <strong>Storage backend</strong>
+                            <small>Read chunks back</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node control-plane">
+                            <strong>Gateway rebuild</strong>
+                            <small>Reconstruct file and verify checksums</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node control-plane">
+                            <strong>API response</strong>
+                            <small>Return full file through the server again</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node client-plane">
+                            <strong>Client</strong>
+                            <small>Receives reconstructed file</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="diagram-caption">
+                    <strong>Tradeoff</strong>
+                    <ul>
+                        <li>Simple server-owned chunk logic.</li>
+                        <li>Every upload and download pays API CPU, memory, and network cost.</li>
+                    </ul>
+                </div>
+            </article>
+
+            <article class="diagram-card selected">
+                <div class="diagram-top">
+                    <h3>Choice A · direct object transfer with user-level dedup</h3>
+                    <span class="diagram-badge selected">Selected</span>
+                </div>
+                <p>The API becomes the control plane. The bucket becomes the data plane. Dedup happens per user by checksum and size.</p>
+                <div class="diagram-lane">
+                    <div class="diagram-track">
+                        <div class="diagram-track-label">Upload</div>
+                        <div class="diagram-node client-plane">
+                            <strong>Client</strong>
+                            <small>Requests session with <code>sha256</code> and size</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node control-plane">
+                            <strong>API transfer service</strong>
+                            <small>Auth, dedup lookup, signed URL issue</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node data-plane">
+                            <strong>Object storage bucket</strong>
+                            <small>Client uploads bytes directly to staging or canonical object</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node meta-plane">
+                            <strong>Metadata DB</strong>
+                            <small>Store upload session and object reference</small>
+                        </div>
+                    </div>
+                    <div class="diagram-track">
+                        <div class="diagram-track-label">Download</div>
+                        <div class="diagram-node client-plane">
+                            <strong>Client</strong>
+                            <small>Asks for a download URL</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node control-plane">
+                            <strong>API transfer service</strong>
+                            <small>Resolve manifest, validate ownership</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node data-plane">
+                            <strong>Object storage bucket</strong>
+                            <small>Serve bytes through signed <code>GET</code></small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node client-plane">
+                            <strong>Client</strong>
+                            <small>Downloads file without API relay</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="diagram-caption">
+                    <strong>Why it fits this repo</strong>
+                    <ul>
+                        <li>Removes the API from the byte path.</li>
+                        <li>Keeps auth, namespace isolation, and metadata on the server.</li>
+                        <li>Supports per-user dedup with <code>unique (owner_user_id, checksum_sha256, size_bytes)</code>.</li>
+                    </ul>
+                </div>
+            </article>
+
+            <article class="diagram-card">
+                <div class="diagram-top">
+                    <h3>Choice B · client-side chunking with signed chunk URLs</h3>
+                    <span class="diagram-badge alternative">Alternative</span>
+                </div>
+                <p>This preserves chunk-oriented storage in the hot path, but it moves chunk creation and retry orchestration into the client.</p>
+                <div class="diagram-lane">
+                    <div class="diagram-track">
+                        <div class="diagram-track-label">Upload</div>
+                        <div class="diagram-node client-plane">
+                            <strong>Client chunker</strong>
+                            <small>Split file locally and hash each chunk</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node control-plane">
+                            <strong>API chunk planner</strong>
+                            <small>Issue chunk plan and signed URLs</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node data-plane">
+                            <strong>Bucket chunk objects</strong>
+                            <small>Client uploads many chunk objects directly</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node meta-plane">
+                            <strong>Metadata DB</strong>
+                            <small>Commit chunk manifest after every required chunk exists</small>
+                        </div>
+                    </div>
+                    <div class="diagram-track">
+                        <div class="diagram-track-label">Download</div>
+                        <div class="diagram-node meta-plane">
+                            <strong>Metadata DB</strong>
+                            <small>Return ordered chunk map</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node client-plane">
+                            <strong>Client reassembler</strong>
+                            <small>Fetch chunks and rebuild file locally</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node data-plane">
+                            <strong>Bucket chunk objects</strong>
+                            <small>Serve many object reads per file</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="diagram-caption">
+                    <strong>Tradeoff</strong>
+                    <ul>
+                        <li>Preserves the current chunk model best.</li>
+                        <li>Makes the client much more complex for upload, retry, and download assembly.</li>
+                    </ul>
+                </div>
+            </article>
+
+            <article class="diagram-card">
+                <div class="diagram-top">
+                    <h3>Choice C · direct upload, then async ingest into chunked storage</h3>
+                    <span class="diagram-badge alternative">Alternative</span>
+                </div>
+                <p>This keeps direct upload for the user while preserving chunk-based internal storage, but file commit becomes asynchronous.</p>
+                <div class="diagram-lane">
+                    <div class="diagram-track">
+                        <div class="diagram-track-label">Upload</div>
+                        <div class="diagram-node client-plane">
+                            <strong>Client</strong>
+                            <small>Upload one full object through signed URL</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node data-plane">
+                            <strong>Staging bucket</strong>
+                            <small>Store raw uploaded object</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node worker-plane">
+                            <strong>Ingest worker</strong>
+                            <small>Read staged file, chunk it, and validate it later</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node data-plane">
+                            <strong>Internal chunk store</strong>
+                            <small>Write chunk replicas after background processing</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node meta-plane">
+                            <strong>Metadata DB</strong>
+                            <small>Mark version ready only after ingest completes</small>
+                        </div>
+                    </div>
+                    <div class="diagram-track">
+                        <div class="diagram-track-label">Download</div>
+                        <div class="diagram-node meta-plane">
+                            <strong>Metadata DB</strong>
+                            <small>Expose only completed versions</small>
+                        </div>
+                        <div class="diagram-arrow">→</div>
+                        <div class="diagram-node control-plane">
+                            <strong>API or bucket path</strong>
+                            <small>Depends on whether the canonical copy stays full-object or chunk-only</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="diagram-caption">
+                    <strong>Tradeoff</strong>
+                    <ul>
+                        <li>Keeps direct upload and chunk-based internals together.</li>
+                        <li>Adds ingest state, background failure handling, and delayed file availability.</li>
+                    </ul>
+                </div>
+            </article>
+        </section>
+
+        <div class="section-head">
+            <div>
+                <h2>Metadata to add</h2>
+            </div>
+            <p>
+                The transfer flow needs two new pieces of state: one table for in-flight sessions and one table for stored user-owned objects.
+            </p>
+        </div>
+
+        <section class="data-grid">
+            <article class="data-card">
+                <h3><code>dfs_upload_sessions</code></h3>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Column</th>
+                                <th>Why it exists</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>session_id</code></td>
+                                <td>Stable handle for upload init, complete, and abort.</td>
+                            </tr>
+                            <tr>
+                                <td><code>owner_user_id</code></td>
+                                <td>Binds the session to one authenticated user.</td>
+                            </tr>
+                            <tr>
+                                <td><code>logical_path</code></td>
+                                <td>Lets finalize create the right manifest entry.</td>
+                            </tr>
+                            <tr>
+                                <td><code>expected_checksum_sha256</code></td>
+                                <td>Used for dedup lookup and finalize verification.</td>
+                            </tr>
+                            <tr>
+                                <td><code>expected_size_bytes</code></td>
+                                <td>Guards against truncated or oversized uploads.</td>
+                            </tr>
+                            <tr>
+                                <td><code>staging_object_key</code></td>
+                                <td>Where the direct upload lands before promotion.</td>
+                            </tr>
+                            <tr>
+                                <td><code>status</code>, <code>expires_at</code></td>
+                                <td>Lets workers clean up abandoned sessions safely.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+            <article class="data-card">
+                <h3><code>dfs_stored_objects</code></h3>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Column</th>
+                                <th>Why it exists</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>object_id</code></td>
+                                <td>Stable reference from file versions or manifests.</td>
+                            </tr>
+                            <tr>
+                                <td><code>owner_user_id</code></td>
+                                <td>Defines the dedup boundary.</td>
+                            </tr>
+                            <tr>
+                                <td><code>checksum_sha256</code></td>
+                                <td>Primary content identity for that user.</td>
+                            </tr>
+                            <tr>
+                                <td><code>size_bytes</code></td>
+                                <td>Pairs with checksum to tighten the dedup match.</td>
+                            </tr>
+                            <tr>
+                                <td><code>object_key</code></td>
+                                <td>Canonical bucket path for signed download and reuse.</td>
+                            </tr>
+                            <tr>
+                                <td><code>reference_count</code></td>
+                                <td>Deletes the physical object only when no file version still points to it.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="footer-note">Critical constraint: <code>unique (owner_user_id, checksum_sha256, size_bytes)</code>.</p>
+            </article>
+        </section>
+
+        <div class="section-head">
+            <div>
+                <h2>Implementation slices</h2>
+            </div>
+            <p>
+                This breaks cleanly into steps. Each slice gives you a usable checkpoint instead of one giant migration.
+            </p>
+        </div>
+
+        <section class="slice-grid">
+            <article class="slice-card">
+                <h3>Slice 1 · schema and contracts</h3>
+                <ul>
+                    <li>Add <code>dfs_upload_sessions</code> and <code>dfs_stored_objects</code>.</li>
+                    <li>Add DTOs for upload-session init, complete, and download URL.</li>
+                    <li>Add the unique constraint for per-user dedup.</li>
+                </ul>
+            </article>
+            <article class="slice-card">
+                <h3>Slice 2 · bucket client signing</h3>
+                <ul>
+                    <li>Extend <code>OracleObjectStorageBucketClient</code> for signed <code>PUT</code> and <code>GET</code>.</li>
+                    <li>Add object metadata lookup for finalize checks.</li>
+                    <li>Add object copy or promote support from staging to canonical key.</li>
+                </ul>
+            </article>
+            <article class="slice-card">
+                <h3>Slice 3 · transfer service</h3>
+                <ul>
+                    <li>Create a direct-transfer service for session init, dedup lookup, and finalize.</li>
+                    <li>Keep the API as the control plane.</li>
+                    <li>Leave the existing chunked endpoints in place during rollout.</li>
+                </ul>
+            </article>
+            <article class="slice-card">
+                <h3>Slice 4 · cleanup and rollout</h3>
+                <ul>
+                    <li>Add session expiration cleanup and staged-object cleanup.</li>
+                    <li>Add tests for same-user dedup, cross-user isolation, and finalize races.</li>
+                    <li>Deprecate base64 upload and download only after the direct path is stable.</li>
+                </ul>
+            </article>
+        </section>
+
+        <p class="footer-note">
+            The architectural pivot is simple: if the API chunks the file, the file must pass through the API. If the file must not pass through the API, chunking must move out of the request path. This design moves the bytes to the bucket, keeps ownership and metadata in the API, and uses per-user content hashes to prevent repeated storage.
+        </p>
+    </div>
+
+    <script>
+        const buttons = document.querySelectorAll('.tab-button');
+        const panels = document.querySelectorAll('.panel');
+
+        buttons.forEach((button) => {
+            button.addEventListener('click', () => {
+                const target = button.dataset.tab;
+                buttons.forEach((item) => item.classList.toggle('active', item === button));
+                panels.forEach((panel) => panel.classList.toggle('active', panel.id === target));
+            });
+        });
+    </script>
+</body>
+</html>

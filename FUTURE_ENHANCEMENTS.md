@@ -27,6 +27,19 @@ The main reasons this should still be treated as an MVP are:
 - Recovery and deployment runbooks need to be formalized
 - Secure refresh-cookie flow assumes HTTPS in real deployments
 
+## Selected direction for direct file transfer
+
+The chosen path for the next file-transfer architecture is direct object transfer with API-issued signed URLs and user-level deduplication.
+
+That means:
+
+- The API remains the control plane for authentication, path ownership, session issuance, object verification, and metadata commit
+- The object storage bucket becomes the data plane for file upload and download
+- Deduplication is scoped per user with the identity `(owner_user_id, sha256, size_bytes)`
+- Existing chunked API endpoints can remain in place during rollout for backward compatibility
+
+The rejected alternatives were client-side chunking with signed chunk URLs and direct upload followed by asynchronous ingest into chunked storage. Both keep more complexity in the client or in background processing than this project needs for the next iteration.
+
 ## Priority roadmap
 
 ### Phase 1: Deployment hardening
@@ -74,7 +87,7 @@ Goal: make failures visible and diagnosable without manual digging.
 
 Goal: improve adoption, usability, and day-2 developer experience.
 
-- Add pre-signed object-storage upload and download flows so the client can transfer large files directly and the API can focus on auth, manifest validation, and commit
+- Implement the selected direct-transfer architecture: API-issued signed upload and download URLs, user-owned object keys, finalize verification, and user-level dedup with `(owner_user_id, sha256, size_bytes)`
 - Publish a maintained Postman collection for auth and file flows
 - Document example client flows for register, login, refresh, upload, and download
 - Improve error response consistency and troubleshooting guidance
@@ -86,7 +99,7 @@ Goal: improve adoption, usability, and day-2 developer experience.
 If only a few items are implemented next, these would likely provide the biggest return:
 
 1. Add scheduled background workers and cron-style execution control
-2. Add pre-signed upload and download flows for direct client-to-bucket transfer
+2. Implement Choice A: direct client-to-bucket transfer with API-issued signed URLs and user-level dedup
 3. Add deployment and recovery runbooks
 4. Add rate limiting to auth and upload APIs
 5. Add metrics, alerts, and structured operational logs
@@ -96,7 +109,7 @@ If only a few items are implemented next, these would likely provide the biggest
 For a more production-oriented distributed storage system, the longer horizon could include:
 
 - Automated cutover tooling for legacy local chunks after a backend switch
-- Direct-to-bucket transfer for large objects with API-issued pre-signed URLs and manifest finalization
+- Full rollout of the selected direct-transfer model across upload, download, dedup finalization, cleanup, and migration tooling
 - Multi-host or externalized chunk storage instead of single-host local disk
 - Better health-aware or load-aware placement decisions
 - Metadata snapshots and stronger disaster recovery guarantees
@@ -108,3 +121,5 @@ For a more production-oriented distributed storage system, the longer horizon co
 ## Recommendation
 
 The current system is strong enough to deploy as an MVP and showcase end-to-end engineering ability. The next milestone should be operational hardening, not major feature expansion. Reliability, security, and observability improvements will increase real deployment confidence more than adding new user-facing features first.
+
+Once that hardening work is in place, the selected storage-transfer evolution is Choice A: direct client-to-bucket transfer with API-controlled session lifecycle and user-level dedup.
