@@ -9,6 +9,7 @@ import com.distributedfs.error.LogicalFileNotFoundException;
 import com.distributedfs.error.PayloadTooLargeException;
 import com.distributedfs.error.ServiceUnavailableException;
 import com.distributedfs.error.StorageQuotaExceededException;
+import com.distributedfs.error.UploadSessionNotFoundException;
 import com.distributedfs.error.UserAlreadyExistsException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.error.VersionDeletedException;
@@ -42,6 +43,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({
         LogicalFileNotFoundException.class,
         ChunkNotFoundException.class,
+        UploadSessionNotFoundException.class,
         VersionNotFoundException.class
     })
     public ResponseEntity<ErrorResponse> handleNotFoundException(

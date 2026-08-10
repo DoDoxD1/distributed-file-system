@@ -10,6 +10,7 @@ distributed:
       password: ${DISTRIBUTED_FS_BOOTSTRAP_ADMIN_PASSWORD:}
     max-file-size-bytes: 26214400
     max-user-storage-bytes: 1073741824
+    direct-upload-session-ttl-seconds: 900
     access-token-ttl-seconds: 900
     refresh-token-ttl-seconds: 86400
     refresh-cookie-name: dfs_refresh_token

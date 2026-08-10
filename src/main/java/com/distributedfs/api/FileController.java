@@ -2,6 +2,8 @@ package com.distributedfs.api;
 
 import com.distributedfs.api.dto.DeleteFileResponse;
 import com.distributedfs.api.dto.DownloadFileResponse;
+import com.distributedfs.api.dto.CreateDirectUploadSessionRequest;
+import com.distributedfs.api.dto.DirectUploadSessionResponse;
 import com.distributedfs.api.dto.FileListingResponse;
 import com.distributedfs.api.dto.FileManifestResponse;
 import com.distributedfs.api.dto.UploadFileRequest;
@@ -11,8 +13,10 @@ import com.distributedfs.config.OpenApiConfiguration;
 import com.distributedfs.error.PayloadTooLargeException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.model.AuthenticatedUser;
+import com.distributedfs.model.DirectUploadSession;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
+import com.distributedfs.service.DirectTransferService;
 import com.distributedfs.service.UserFileService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -40,13 +44,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class FileController {
 
     private final UserFileService userFileService;
+    private final DirectTransferService directTransferService;
     private final DistributedFsProperties properties;
 
     public FileController(
         UserFileService userFileService,
+        DirectTransferService directTransferService,
         DistributedFsProperties properties
     ) {
         this.userFileService = userFileService;
+        this.directTransferService = directTransferService;
         this.properties = properties;
     }
 
@@ -72,6 +79,41 @@ public class FileController {
             request.idempotencyKey()
         );
         return new UploadFileResponse(FileManifestResponse.fromManifest(manifest));
+    }
+
+    @Operation(
+        summary = "Create a direct upload session",
+        description = "Plans a Choice A direct-transfer upload for the authenticated user and returns session metadata for dedup-aware upload handling."
+    )
+    @PostMapping(value = "/direct/upload-sessions", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    public DirectUploadSessionResponse createDirectUploadSession(
+        @Valid @RequestBody CreateDirectUploadSessionRequest request,
+        HttpServletRequest httpRequest
+    ) {
+        AuthenticatedUser user = RequestUserContext.requireAuthenticatedUser(httpRequest);
+        DirectUploadSession session = directTransferService.createUploadSession(
+            user,
+            request.logicalPath(),
+            request.checksumSha256(),
+            request.sizeBytes(),
+            request.contentType(),
+            request.idempotencyKey()
+        );
+        return DirectUploadSessionResponse.fromSession(session);
+    }
+
+    @Operation(
+        summary = "Get direct upload session",
+        description = "Returns the current direct-transfer upload session plan for the authenticated user."
+    )
+    @GetMapping(value = "/direct/upload-sessions/{sessionId}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public DirectUploadSessionResponse getDirectUploadSession(
+        @PathVariable String sessionId,
+        HttpServletRequest httpRequest
+    ) {
+        AuthenticatedUser user = RequestUserContext.requireAuthenticatedUser(httpRequest);
+        DirectUploadSession session = directTransferService.getUploadSession(user, sessionId);
+        return DirectUploadSessionResponse.fromSession(session);
     }
 
     @Operation(

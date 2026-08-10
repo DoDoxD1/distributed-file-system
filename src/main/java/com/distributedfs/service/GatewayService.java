@@ -16,6 +16,7 @@ import com.distributedfs.model.FileManifest;
 import com.distributedfs.placement.RackAwarePlacementStrategy;
 import com.distributedfs.util.ChunkingUtil;
 import com.distributedfs.util.HashingUtil;
+import com.distributedfs.util.LogicalPathValidator;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -341,41 +342,11 @@ public class GatewayService {
     }
 
     private static String normalizeLogicalPath(String logicalPath) {
-        if (logicalPath == null) {
-            throw new ValidationException("logicalPath must be non-empty");
-        }
-
-        String candidate = logicalPath.strip();
-        if (candidate.isEmpty()) {
-            throw new ValidationException("logicalPath must be non-empty");
-        }
-        if (!candidate.startsWith("/")) {
-            throw new ValidationException("logicalPath must start with '/': " + logicalPath);
-        }
-        if (candidate.contains("//")) {
-            throw new ValidationException(
-                "logicalPath cannot contain '//' segments: " + logicalPath
-            );
-        }
-        if (!candidate.equals("/") && candidate.endsWith("/")) {
-            throw new ValidationException("logicalPath cannot end with '/': " + logicalPath);
-        }
-        return candidate;
+        return LogicalPathValidator.normalizeLogicalPath(logicalPath);
     }
 
     private static String normalizePrefix(String prefix) {
-        if (prefix == null) {
-            return "";
-        }
-
-        String candidate = prefix.strip();
-        if (candidate.isEmpty()) {
-            return "";
-        }
-        if (!candidate.startsWith("/")) {
-            throw new ValidationException("prefix must start with '/': " + prefix);
-        }
-        return candidate;
+        return LogicalPathValidator.normalizePrefix(prefix);
     }
 
     private static byte[] normalizePayload(byte[] payload) {

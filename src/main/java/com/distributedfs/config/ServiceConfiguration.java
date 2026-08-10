@@ -3,6 +3,7 @@ package com.distributedfs.config;
 import com.distributedfs.placement.RackAwarePlacementStrategy;
 import com.distributedfs.service.AuthenticationService;
 import com.distributedfs.service.BackgroundWorkerService;
+import com.distributedfs.service.DirectTransferService;
 import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.LocalStorageNode;
 import com.distributedfs.service.MetadataService;
@@ -199,6 +200,14 @@ public class ServiceConfiguration {
             transactionManager,
             properties
         );
+    }
+
+    @Bean
+    public DirectTransferService directTransferService(
+        MetadataService metadataService,
+        TimeProvider timeProvider
+    ) {
+        return new DirectTransferService(metadataService, properties, timeProvider);
     }
 
     @Bean

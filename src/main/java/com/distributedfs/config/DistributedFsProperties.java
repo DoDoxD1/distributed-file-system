@@ -44,6 +44,9 @@ public class DistributedFsProperties {
     @Min(1)
     private long maxUserStorageBytes = 1_073_741_824;
 
+    @Min(1)
+    private long directUploadSessionTtlSeconds = 900;
+
     @Min(60)
     private long accessTokenTtlSeconds = 900;
 
@@ -140,6 +143,14 @@ public class DistributedFsProperties {
 
     public void setMaxUserStorageBytes(long maxUserStorageBytes) {
         this.maxUserStorageBytes = maxUserStorageBytes;
+    }
+
+    public long getDirectUploadSessionTtlSeconds() {
+        return directUploadSessionTtlSeconds;
+    }
+
+    public void setDirectUploadSessionTtlSeconds(long directUploadSessionTtlSeconds) {
+        this.directUploadSessionTtlSeconds = directUploadSessionTtlSeconds;
     }
 
     public long getAccessTokenTtlSeconds() {

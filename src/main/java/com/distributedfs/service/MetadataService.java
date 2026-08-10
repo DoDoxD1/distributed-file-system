@@ -3,13 +3,17 @@ package com.distributedfs.service;
 import com.distributedfs.error.ChunkNotFoundException;
 import com.distributedfs.error.LogicalFileNotFoundException;
 import com.distributedfs.error.MetadataConflictException;
+import com.distributedfs.error.UploadSessionNotFoundException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.error.VersionDeletedException;
 import com.distributedfs.error.VersionNotFoundException;
 import com.distributedfs.model.ChunkRecord;
 import com.distributedfs.model.ChunkWrite;
+import com.distributedfs.model.DirectUploadSession;
+import com.distributedfs.model.DirectUploadSessionStatus;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
+import com.distributedfs.model.StoredObject;
 import com.distributedfs.util.TimeProvider;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -369,6 +373,241 @@ public class MetadataService {
         if (lockedUserId == null) {
             throw new ValidationException("Unknown userId: " + normalizedUserId);
         }
+    }
+
+    public Optional<DirectUploadSession> findUploadSessionByIdempotency(
+        String ownerUserId,
+        String logicalPath,
+        String idempotencyKey
+    ) {
+        String normalizedOwnerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        String normalizedLogicalPath = requireNonBlank(logicalPath, "logicalPath");
+        String normalizedIdempotencyKey = requireNonBlank(idempotencyKey, "idempotencyKey");
+
+        UploadSessionRow sessionRow = querySingle(
+            """
+            select session_id, owner_user_id, logical_path, expected_checksum_sha256,
+                expected_size_bytes, content_type, idempotency_key, staging_object_key,
+                status, resolved_object_id, created_at, expires_at
+            from dfs_upload_sessions
+            where owner_user_id = ? and logical_path = ? and idempotency_key = ?
+            """,
+            (resultSet, rowNum) -> new UploadSessionRow(
+                resultSet.getString("session_id"),
+                resultSet.getString("owner_user_id"),
+                resultSet.getString("logical_path"),
+                resultSet.getString("expected_checksum_sha256"),
+                resultSet.getLong("expected_size_bytes"),
+                resultSet.getString("content_type"),
+                resultSet.getString("idempotency_key"),
+                resultSet.getString("staging_object_key"),
+                DirectUploadSessionStatus.valueOf(resultSet.getString("status")),
+                resultSet.getString("resolved_object_id"),
+                getInstant(resultSet, "created_at"),
+                getInstant(resultSet, "expires_at")
+            ),
+            normalizedOwnerUserId,
+            normalizedLogicalPath,
+            normalizedIdempotencyKey
+        );
+        if (sessionRow == null) {
+            return Optional.empty();
+        }
+        return Optional.of(copyDirectUploadSession(sessionRow.toDirectUploadSession()));
+    }
+
+    public DirectUploadSession createUploadSession(
+        String sessionId,
+        String ownerUserId,
+        String logicalPath,
+        String checksumSha256,
+        long sizeBytes,
+        String contentType,
+        String idempotencyKey,
+        String stagingObjectKey,
+        DirectUploadSessionStatus status,
+        String resolvedObjectId,
+        Instant createdAt,
+        Instant expiresAt
+    ) {
+        String normalizedSessionId = requireNonBlank(sessionId, "sessionId");
+        String normalizedOwnerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        String normalizedLogicalPath = requireNonBlank(logicalPath, "logicalPath");
+        String normalizedChecksumSha256 = requireNonBlank(checksumSha256, "checksumSha256");
+        if (sizeBytes < 0) {
+            throw new ValidationException("sizeBytes must be non-negative, got " + sizeBytes);
+        }
+        DirectUploadSessionStatus normalizedStatus = Objects.requireNonNull(status, "status must be non-null");
+        String normalizedContentType = normalizeNullable(contentType);
+        String normalizedIdempotencyKey = normalizeNullable(idempotencyKey);
+        String normalizedStagingObjectKey = normalizeNullable(stagingObjectKey);
+        String normalizedResolvedObjectId = normalizeNullable(resolvedObjectId);
+        Instant normalizedCreatedAt = Objects.requireNonNull(createdAt, "createdAt must be non-null");
+        Instant normalizedExpiresAt = Objects.requireNonNull(expiresAt, "expiresAt must be non-null");
+
+        try {
+            DirectUploadSession createdSession = transactionTemplate.execute(transactionStatus -> {
+                lockUserRow(normalizedOwnerUserId);
+                jdbcTemplate.update(
+                    """
+                    insert into dfs_upload_sessions(
+                        session_id,
+                        owner_user_id,
+                        logical_path,
+                        expected_checksum_sha256,
+                        expected_size_bytes,
+                        content_type,
+                        idempotency_key,
+                        staging_object_key,
+                        status,
+                        resolved_object_id,
+                        created_at,
+                        expires_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    normalizedSessionId,
+                    normalizedOwnerUserId,
+                    normalizedLogicalPath,
+                    normalizedChecksumSha256,
+                    sizeBytes,
+                    normalizedContentType,
+                    normalizedIdempotencyKey,
+                    normalizedStagingObjectKey,
+                    normalizedStatus.name(),
+                    normalizedResolvedObjectId,
+                    toTimestamp(normalizedCreatedAt),
+                    toTimestamp(normalizedExpiresAt)
+                );
+                return Objects.requireNonNull(loadUploadSessionById(normalizedSessionId));
+            });
+            return copyDirectUploadSession(Objects.requireNonNull(createdSession));
+        } catch (DuplicateKeyException error) {
+            if (normalizedIdempotencyKey != null) {
+                Optional<DirectUploadSession> existingSession = findUploadSessionByIdempotency(
+                    normalizedOwnerUserId,
+                    normalizedLogicalPath,
+                    normalizedIdempotencyKey
+                );
+                if (existingSession.isPresent()) {
+                    return existingSession.get();
+                }
+            }
+            throw new MetadataConflictException(
+                "Direct upload session conflicted for logical path: " + normalizedLogicalPath
+            );
+        }
+    }
+
+    public DirectUploadSession getUploadSession(String ownerUserId, String sessionId) {
+        String normalizedOwnerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        String normalizedSessionId = requireNonBlank(sessionId, "sessionId");
+
+        DirectUploadSession session = loadUploadSessionById(normalizedSessionId);
+        if (session == null || !Objects.equals(session.ownerUserId(), normalizedOwnerUserId)) {
+            throw new UploadSessionNotFoundException(
+                "Upload session " + normalizedSessionId + " does not exist for user "
+                    + normalizedOwnerUserId
+            );
+        }
+        return copyDirectUploadSession(session);
+    }
+
+    public Optional<StoredObject> findStoredObject(
+        String ownerUserId,
+        String checksumSha256,
+        long sizeBytes
+    ) {
+        String normalizedOwnerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        String normalizedChecksumSha256 = requireNonBlank(checksumSha256, "checksumSha256");
+        if (sizeBytes < 0) {
+            throw new ValidationException("sizeBytes must be non-negative, got " + sizeBytes);
+        }
+
+        StoredObjectRow storedObjectRow = querySingle(
+            """
+            select object_id, owner_user_id, checksum_sha256, size_bytes, object_key,
+                reference_count, created_at
+            from dfs_stored_objects
+            where owner_user_id = ? and checksum_sha256 = ? and size_bytes = ?
+            """,
+            (resultSet, rowNum) -> new StoredObjectRow(
+                resultSet.getString("object_id"),
+                resultSet.getString("owner_user_id"),
+                resultSet.getString("checksum_sha256"),
+                resultSet.getLong("size_bytes"),
+                resultSet.getString("object_key"),
+                resultSet.getLong("reference_count"),
+                getInstant(resultSet, "created_at")
+            ),
+            normalizedOwnerUserId,
+            normalizedChecksumSha256,
+            sizeBytes
+        );
+        if (storedObjectRow == null) {
+            return Optional.empty();
+        }
+        return Optional.of(copyStoredObject(storedObjectRow.toStoredObject()));
+    }
+
+    public StoredObject createStoredObject(
+        String ownerUserId,
+        String checksumSha256,
+        long sizeBytes,
+        String objectKey,
+        long referenceCount
+    ) {
+        String normalizedOwnerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        String normalizedChecksumSha256 = requireNonBlank(checksumSha256, "checksumSha256");
+        String normalizedObjectKey = requireNonBlank(objectKey, "objectKey");
+        if (sizeBytes < 0) {
+            throw new ValidationException("sizeBytes must be non-negative, got " + sizeBytes);
+        }
+        if (referenceCount < 0) {
+            throw new ValidationException(
+                "referenceCount must be non-negative, got " + referenceCount
+            );
+        }
+        Instant createdAt = timeProvider.now();
+
+        StoredObject storedObject = transactionTemplate.execute(transactionStatus -> {
+            lockUserRow(normalizedOwnerUserId);
+            String objectId = newId();
+            boolean inserted = insertIgnoringDuplicate(
+                """
+                insert into dfs_stored_objects(
+                    object_id,
+                    owner_user_id,
+                    checksum_sha256,
+                    size_bytes,
+                    object_key,
+                    reference_count,
+                    created_at
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                objectId,
+                normalizedOwnerUserId,
+                normalizedChecksumSha256,
+                sizeBytes,
+                normalizedObjectKey,
+                referenceCount,
+                toTimestamp(createdAt)
+            );
+            StoredObject existingStoredObject = findStoredObject(
+                normalizedOwnerUserId,
+                normalizedChecksumSha256,
+                sizeBytes
+            ).orElseThrow(() -> new MetadataConflictException(
+                "Stored object metadata was not created for object key: " + normalizedObjectKey
+            ));
+            if (!inserted && !Objects.equals(existingStoredObject.objectKey(), normalizedObjectKey)) {
+                throw new MetadataConflictException(
+                    "Stored object already exists with different object key for user "
+                        + normalizedOwnerUserId
+                );
+            }
+            return existingStoredObject;
+        });
+        return copyStoredObject(Objects.requireNonNull(storedObject));
     }
 
     /**
@@ -787,6 +1026,37 @@ public class MetadataService {
         return querySingleValue(sql, String.class, fileId);
     }
 
+    private DirectUploadSession loadUploadSessionById(String sessionId) {
+        UploadSessionRow uploadSessionRow = querySingle(
+            """
+            select session_id, owner_user_id, logical_path, expected_checksum_sha256,
+                expected_size_bytes, content_type, idempotency_key, staging_object_key,
+                status, resolved_object_id, created_at, expires_at
+            from dfs_upload_sessions
+            where session_id = ?
+            """,
+            (resultSet, rowNum) -> new UploadSessionRow(
+                resultSet.getString("session_id"),
+                resultSet.getString("owner_user_id"),
+                resultSet.getString("logical_path"),
+                resultSet.getString("expected_checksum_sha256"),
+                resultSet.getLong("expected_size_bytes"),
+                resultSet.getString("content_type"),
+                resultSet.getString("idempotency_key"),
+                resultSet.getString("staging_object_key"),
+                DirectUploadSessionStatus.valueOf(resultSet.getString("status")),
+                resultSet.getString("resolved_object_id"),
+                getInstant(resultSet, "created_at"),
+                getInstant(resultSet, "expires_at")
+            ),
+            sessionId
+        );
+        if (uploadSessionRow == null) {
+            return null;
+        }
+        return uploadSessionRow.toDirectUploadSession();
+    }
+
     private FileManifest loadManifestByVersionId(String versionId) {
         ManifestRow manifestRow = querySingle(
             """
@@ -1107,6 +1377,35 @@ public class MetadataService {
         );
     }
 
+    private static DirectUploadSession copyDirectUploadSession(DirectUploadSession session) {
+        return new DirectUploadSession(
+            session.sessionId(),
+            session.ownerUserId(),
+            session.logicalPath(),
+            session.checksumSha256(),
+            session.sizeBytes(),
+            session.contentType(),
+            session.idempotencyKey(),
+            session.stagingObjectKey(),
+            session.status(),
+            session.resolvedObjectId(),
+            session.createdAt(),
+            session.expiresAt()
+        );
+    }
+
+    private static StoredObject copyStoredObject(StoredObject storedObject) {
+        return new StoredObject(
+            storedObject.objectId(),
+            storedObject.ownerUserId(),
+            storedObject.checksumSha256(),
+            storedObject.sizeBytes(),
+            storedObject.objectKey(),
+            storedObject.referenceCount(),
+            storedObject.createdAt()
+        );
+    }
+
     private static String newId() {
         return UUID.randomUUID().toString().replace("-", "");
     }
@@ -1159,6 +1458,62 @@ public class MetadataService {
         int sizeBytes,
         Instant lastUnreferencedAt
     ) {
+    }
+
+    private record UploadSessionRow(
+        String sessionId,
+        String ownerUserId,
+        String logicalPath,
+        String checksumSha256,
+        long sizeBytes,
+        String contentType,
+        String idempotencyKey,
+        String stagingObjectKey,
+        DirectUploadSessionStatus status,
+        String resolvedObjectId,
+        Instant createdAt,
+        Instant expiresAt
+    ) {
+
+        private DirectUploadSession toDirectUploadSession() {
+            return new DirectUploadSession(
+                sessionId,
+                ownerUserId,
+                logicalPath,
+                checksumSha256,
+                sizeBytes,
+                contentType,
+                idempotencyKey,
+                stagingObjectKey,
+                status,
+                resolvedObjectId,
+                createdAt,
+                expiresAt
+            );
+        }
+    }
+
+    private record StoredObjectRow(
+        String objectId,
+        String ownerUserId,
+        String checksumSha256,
+        long sizeBytes,
+        String objectKey,
+        long referenceCount,
+        Instant createdAt
+    ) {
+
+        private StoredObject toStoredObject() {
+            return new StoredObject(
+                objectId,
+                ownerUserId,
+                checksumSha256,
+                sizeBytes,
+                objectKey,
+                referenceCount,
+                createdAt
+            );
+        }
     }
 
     private record VersionChunkRow(String versionId, String chunkId) {

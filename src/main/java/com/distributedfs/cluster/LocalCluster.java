@@ -3,6 +3,7 @@ package com.distributedfs.cluster;
 import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.service.AuthenticationService;
 import com.distributedfs.service.BackgroundWorkerService;
+import com.distributedfs.service.DirectTransferService;
 import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.MetadataService;
 import com.distributedfs.service.StorageNode;
@@ -17,6 +18,7 @@ public record LocalCluster(
     MetadataService metadataService,
     AuthenticationService authenticationService,
     GatewayService gatewayService,
+    DirectTransferService directTransferService,
     UserFileService userFileService,
     BackgroundWorkerService backgroundWorkerService,
     Map<String, StorageNode> storageNodes

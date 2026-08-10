@@ -1,6 +1,7 @@
 package com.distributedfs.api;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -56,6 +57,48 @@ class FileControllerIntegrationTest {
             .andExpect(status().isPayloadTooLarge())
             .andExpect(jsonPath("$.error").value("payload_too_large"))
             .andExpect(jsonPath("$.message", containsString("4 > 3")));
+    }
+
+    @Test
+    void directUploadSessionCreateAndReadReturnScopedSessionPlan() throws Exception {
+        String accessToken = registerAndExtractAccessToken();
+
+        MvcResult createSessionResult = mockMvc.perform(
+            post("/api/v1/files/direct/upload-sessions")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "logicalPath": "/docs/report.pdf",
+                      "checksumSha256": "8f434346648f6b96df89dda901c5176b10a6d83961f9778f7f1449d84d35a32c",
+                      "sizeBytes": 3,
+                      "contentType": "application/pdf",
+                      "idempotencyKey": "direct-request-1"
+                    }
+                    """)
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.logicalPath").value("/docs/report.pdf"))
+            .andExpect(jsonPath("$.checksumSha256").value("8f434346648f6b96df89dda901c5176b10a6d83961f9778f7f1449d84d35a32c"))
+            .andExpect(jsonPath("$.sizeBytes").value(3))
+            .andExpect(jsonPath("$.status").value("AWAITING_UPLOAD"))
+            .andExpect(jsonPath("$.uploadRequired").value(true))
+            .andExpect(jsonPath("$.stagingObjectKey", containsString("/staging/")))
+            .andReturn();
+
+        String sessionId = extractJsonField(
+            createSessionResult.getResponse().getContentAsString(),
+            "sessionId"
+        );
+
+        mockMvc.perform(
+            get("/api/v1/files/direct/upload-sessions/{sessionId}", sessionId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.sessionId").value(sessionId))
+            .andExpect(jsonPath("$.logicalPath").value("/docs/report.pdf"))
+            .andExpect(jsonPath("$.status").value("AWAITING_UPLOAD"));
     }
 
     private String registerAndExtractAccessToken() throws Exception {

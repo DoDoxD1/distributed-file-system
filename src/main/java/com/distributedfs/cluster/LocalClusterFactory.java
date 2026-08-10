@@ -4,6 +4,7 @@ import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.placement.RackAwarePlacementStrategy;
 import com.distributedfs.service.AuthenticationService;
 import com.distributedfs.service.BackgroundWorkerService;
+import com.distributedfs.service.DirectTransferService;
 import com.distributedfs.service.GatewayService;
 import com.distributedfs.service.LocalStorageNode;
 import com.distributedfs.service.MetadataService;
@@ -117,6 +118,11 @@ public final class LocalClusterFactory {
             placementStrategy,
             properties
         );
+        DirectTransferService directTransferService = new DirectTransferService(
+            metadataService,
+            properties,
+            timeProvider
+        );
         UserStorageQuotaService userStorageQuotaService = new UserStorageQuotaService(
             gatewayService,
             metadataService,
@@ -139,6 +145,7 @@ public final class LocalClusterFactory {
             metadataService,
             authenticationService,
             gatewayService,
+            directTransferService,
             userFileService,
             workerService,
             nodeMap
