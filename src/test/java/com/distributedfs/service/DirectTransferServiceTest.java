@@ -36,7 +36,8 @@ class DirectTransferServiceTest {
         LocalCluster cluster = buildOracleCluster(bucketClient);
         AuthenticatedUser user = cluster.authenticationService().register(
             "direct-upload@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
 
         DirectUploadSession session = cluster.directTransferService().createUploadSession(
@@ -76,7 +77,8 @@ class DirectTransferServiceTest {
         LocalCluster cluster = buildCluster();
         AuthenticatedUser user = cluster.authenticationService().register(
             "idempotent-direct@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
 
         DirectUploadSession firstSession = cluster.directTransferService().createUploadSession(
@@ -105,7 +107,8 @@ class DirectTransferServiceTest {
         LocalCluster cluster = buildOracleCluster(bucketClient);
         AuthenticatedUser user = cluster.authenticationService().register(
             "dedup-direct@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
         cluster.metadataService().createStoredObject(
             user.userId(),
@@ -137,7 +140,8 @@ class DirectTransferServiceTest {
         LocalCluster cluster = buildOracleCluster(bucketClient);
         AuthenticatedUser user = cluster.authenticationService().register(
             "finalize-direct@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
 
         DirectUploadSession session = cluster.directTransferService().createUploadSession(

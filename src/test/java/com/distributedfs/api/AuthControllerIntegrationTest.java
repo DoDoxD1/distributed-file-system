@@ -2,6 +2,7 @@ package com.distributedfs.api;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -124,6 +125,56 @@ class AuthControllerIntegrationTest {
                 .cookie(refreshCookie)
         )
             .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void registerWithDisplayNameReturnsItInUserResponse() throws Exception {
+        mockMvc.perform(
+            post("/api/v1/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "email": "named@example.com",
+                      "password": "password123",
+                      "displayName": "Alice Smith"
+                    }
+                    """)
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.user.displayName").value("Alice Smith"));
+    }
+
+    @Test
+    void updateDisplayNameReturnsUpdatedUserResponse() throws Exception {
+        MvcResult registerResult = mockMvc.perform(
+            post("/api/v1/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "email": "rename@example.com",
+                      "password": "password123",
+                      "displayName": "Old Name"
+                    }
+                    """)
+        )
+            .andExpect(status().isOk())
+            .andReturn();
+
+        String accessToken = extractJsonField(registerResult.getResponse().getContentAsString(), "token");
+
+        mockMvc.perform(
+            patch("/api/v1/users/me")
+                .header("Authorization", "Bearer " + accessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "displayName": "New Name"
+                    }
+                    """)
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.displayName").value("New Name"))
+            .andExpect(jsonPath("$.email").value("rename@example.com"));
     }
 
     private String extractJsonField(String json, String fieldName) {

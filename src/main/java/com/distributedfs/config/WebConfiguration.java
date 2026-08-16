@@ -37,6 +37,8 @@ public class WebConfiguration implements WebMvcConfigurer {
             .addPathPatterns(
                 "/api/v1/files",
                 "/api/v1/files/**",
+                "/api/v1/users",
+                "/api/v1/users/**",
                 "/api/v1/workers",
                 "/api/v1/workers/**"
             );

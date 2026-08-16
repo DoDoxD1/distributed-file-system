@@ -2,6 +2,7 @@ package com.distributedfs.api;
 
 import com.distributedfs.api.dto.AuthResponse;
 import com.distributedfs.api.dto.CredentialsRequest;
+import com.distributedfs.api.dto.RegistrationRequest;
 import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.error.AuthenticationException;
 import com.distributedfs.model.AuthenticatedSession;
@@ -40,12 +41,13 @@ public class AuthController {
     )
     @PostMapping(value = "/register", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public AuthResponse register(
-        @Valid @RequestBody CredentialsRequest request,
+        @Valid @RequestBody RegistrationRequest request,
         HttpServletResponse response
     ) {
         AuthenticatedSession session = authenticationService.register(
             request.email(),
-            request.password()
+            request.password(),
+            request.displayName()
         );
         writeRefreshCookie(response, session);
         return AuthResponse.fromSession(session);

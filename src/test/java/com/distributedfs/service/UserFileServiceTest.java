@@ -32,7 +32,8 @@ class UserFileServiceTest {
 
         AuthenticatedSession registrationSession = cluster.authenticationService().register(
             "User@Example.com",
-            "password123"
+            "password123",
+            null
         );
         AuthenticatedUser registeredUser = registrationSession.user();
 
@@ -70,7 +71,7 @@ class UserFileServiceTest {
         );
         assertThrows(
             UserAlreadyExistsException.class,
-            () -> cluster.authenticationService().register("user@example.com", "password123")
+            () -> cluster.authenticationService().register("user@example.com", "password123", null)
         );
 
         AuthenticatedSession refreshedSession = cluster.authenticationService().refresh(
@@ -90,12 +91,52 @@ class UserFileServiceTest {
     }
 
     @Test
+    void registerWithDisplayNamePersistsAndReturnsItOnAuthenticate() {
+        LocalCluster cluster = buildCluster();
+
+        AuthenticatedSession session = cluster.authenticationService().register(
+            "named@example.com",
+            "password123",
+            "Alice Smith"
+        );
+
+        assertEquals("Alice Smith", session.user().displayName());
+        assertEquals(
+            "Alice Smith",
+            cluster.authenticationService().authenticate(session.accessToken()).displayName()
+        );
+    }
+
+    @Test
+    void updateDisplayNameReflectsOnNextAuthentication() {
+        LocalCluster cluster = buildCluster();
+
+        AuthenticatedSession session = cluster.authenticationService().register(
+            "rename@example.com",
+            "password123",
+            "Old Name"
+        );
+
+        AuthenticatedUser updated = cluster.authenticationService().updateDisplayName(
+            session.user().userId(),
+            "New Name"
+        );
+
+        assertEquals("New Name", updated.displayName());
+        assertEquals(
+            "New Name",
+            cluster.authenticationService().authenticate(session.accessToken()).displayName()
+        );
+    }
+
+    @Test
     void logoutRevokesCurrentAccessAndRefreshSessions() {
         LocalCluster cluster = buildCluster();
 
         AuthenticatedSession loginSession = cluster.authenticationService().register(
             "logout@example.com",
-            "password123"
+            "password123",
+            null
         );
 
         assertEquals(
@@ -121,11 +162,13 @@ class UserFileServiceTest {
 
         AuthenticatedUser firstUser = cluster.authenticationService().register(
             "first@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
         AuthenticatedUser secondUser = cluster.authenticationService().register(
             "second@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
 
         FileManifest firstManifest = cluster.userFileService().uploadFile(
@@ -178,7 +221,8 @@ class UserFileServiceTest {
         cluster.properties().setMaxUserStorageBytes(10);
         AuthenticatedUser user = cluster.authenticationService().register(
             "quota@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
 
         cluster.userFileService().uploadFile(user, "/docs/first.txt", "12345".getBytes(), null);
@@ -200,7 +244,8 @@ class UserFileServiceTest {
         cluster.properties().setMaxUserStorageBytes(10);
         AuthenticatedUser user = cluster.authenticationService().register(
             "delete-quota@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
 
         cluster.userFileService().uploadFile(user, "/docs/first.txt", "12345".getBytes(), null);
@@ -223,7 +268,8 @@ class UserFileServiceTest {
         cluster.properties().setMaxUserStorageBytes(5);
         AuthenticatedUser user = cluster.authenticationService().register(
             "idempotent@example.com",
-            "password123"
+            "password123",
+            null
         ).user();
 
         FileManifest firstManifest = cluster.userFileService().uploadFile(
