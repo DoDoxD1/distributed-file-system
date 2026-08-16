@@ -199,6 +199,36 @@ public class AuthenticationService {
         );
     }
 
+    public void logout(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return;
+        }
+        String refreshTokenHash = PasswordHashingUtil.hashToken(refreshToken.strip());
+        RefreshSessionRow refreshSession = jdbcTemplate.query(
+            """
+            select s.user_id, u.email, u.is_admin, u.created_at, s.expires_at
+            from dfs_user_refresh_sessions s
+            join dfs_users u on u.user_id = s.user_id
+            where s.token_hash = ?
+            """,
+            this::mapRefreshSessionRow,
+            refreshTokenHash
+        ).stream().findFirst().orElse(null);
+        if (refreshSession == null) {
+            return;
+        }
+        transactionTemplate.executeWithoutResult(status -> {
+            jdbcTemplate.update(
+                "delete from dfs_user_refresh_sessions where user_id = ?",
+                refreshSession.userId()
+            );
+            jdbcTemplate.update(
+                "delete from dfs_user_sessions where user_id = ?",
+                refreshSession.userId()
+            );
+        });
+    }
+
     private AuthenticatedSession createSession(
         String userId,
         String email,

@@ -90,6 +90,32 @@ class UserFileServiceTest {
     }
 
     @Test
+    void logoutRevokesCurrentAccessAndRefreshSessions() {
+        LocalCluster cluster = buildCluster();
+
+        AuthenticatedSession loginSession = cluster.authenticationService().register(
+            "logout@example.com",
+            "password123"
+        );
+
+        assertEquals(
+            loginSession.user(),
+            cluster.authenticationService().authenticate(loginSession.accessToken())
+        );
+
+        cluster.authenticationService().logout(loginSession.refreshToken());
+
+        assertThrows(
+            AuthenticationException.class,
+            () -> cluster.authenticationService().authenticate(loginSession.accessToken())
+        );
+        assertThrows(
+            AuthenticationException.class,
+            () -> cluster.authenticationService().refresh(loginSession.refreshToken())
+        );
+    }
+
+    @Test
     void usersHaveIndependentNamespacesForSameLogicalPath() {
         LocalCluster cluster = buildCluster();
 

@@ -93,6 +93,39 @@ class AuthControllerIntegrationTest {
             .andExpect(status().isOk());
     }
 
+    @Test
+    void logoutClearsRefreshCookieAndRevokesSession() throws Exception {
+        MvcResult registerResult = mockMvc.perform(
+            post("/api/v1/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "email": "logout-cookie@example.com",
+                      "password": "password123"
+                    }
+                    """)
+        )
+            .andExpect(status().isOk())
+            .andReturn();
+
+        Cookie refreshCookie = registerResult.getResponse().getCookie("dfs_refresh_token");
+
+        mockMvc.perform(
+            post("/api/v1/auth/logout")
+                .cookie(refreshCookie)
+        )
+            .andExpect(status().isOk())
+            .andExpect(header().string("Set-Cookie", containsString("dfs_refresh_token=")))
+            .andExpect(header().string("Set-Cookie", containsString("Max-Age=0")))
+            .andExpect(header().string("Set-Cookie", containsString("Path=/api/v1/auth")));
+
+        mockMvc.perform(
+            post("/api/v1/auth/refresh")
+                .cookie(refreshCookie)
+        )
+            .andExpect(status().isUnauthorized());
+    }
+
     private String extractJsonField(String json, String fieldName) {
         String needle = "\"" + fieldName + "\":\"";
         int start = json.indexOf(needle);

@@ -84,6 +84,22 @@ public class AuthController {
         return AuthResponse.fromSession(session);
     }
 
+    @Operation(
+        summary = "Log out the current user session",
+        description = "Revokes the current refresh session when present and clears the refresh-token cookie."
+    )
+    @PostMapping(value = "/logout")
+    public void logout(
+        HttpServletRequest request,
+        HttpServletResponse response
+    ) {
+        String refreshToken = findRefreshTokenCookieValue(request);
+        if (refreshToken != null) {
+            authenticationService.logout(refreshToken);
+        }
+        clearRefreshCookie(response);
+    }
+
     private void writeRefreshCookie(
         HttpServletResponse response,
         AuthenticatedSession session
@@ -101,10 +117,32 @@ public class AuthController {
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
     }
 
+    private void clearRefreshCookie(HttpServletResponse response) {
+        ResponseCookie cookie = ResponseCookie.from(
+            properties.getRefreshCookieName(),
+            ""
+        )
+            .httpOnly(true)
+            .secure(properties.isRefreshCookieSecure())
+            .path(properties.getRefreshCookiePath())
+            .sameSite(properties.getRefreshCookieSameSite())
+            .maxAge(0)
+            .build();
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+    }
+
     private String requireRefreshTokenCookie(HttpServletRequest request) {
+        String refreshToken = findRefreshTokenCookieValue(request);
+        if (refreshToken != null) {
+            return refreshToken;
+        }
+        throw new AuthenticationException("Missing refresh token cookie");
+    }
+
+    private String findRefreshTokenCookieValue(HttpServletRequest request) {
         Cookie[] cookies = request.getCookies();
         if (cookies == null) {
-            throw new AuthenticationException("Missing refresh token cookie");
+            return null;
         }
         for (Cookie cookie : cookies) {
             if (properties.getRefreshCookieName().equals(cookie.getName())) {
@@ -112,9 +150,9 @@ public class AuthController {
                 if (value != null && !value.isBlank()) {
                     return value;
                 }
-                break;
+                return null;
             }
         }
-        throw new AuthenticationException("Missing refresh token cookie");
+        return null;
     }
 }

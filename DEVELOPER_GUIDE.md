@@ -71,10 +71,11 @@ The implementation preserves control-plane/data-plane separation:
 2. `AuthenticationService.login()` verifies the PBKDF2 password hash and rotates to a fresh access token plus refresh token pair.
 3. `AuthController` returns the access token in JSON and writes the refresh token as an `HttpOnly` cookie.
 4. `AuthenticationService.refresh()` validates the refresh token, rotates both tokens, and invalidates the previous refresh token.
-5. `AuthenticationInterceptor` hashes bearer access tokens, resolves the active access session, and stores the authenticated user on the request.
-6. `ServiceConfiguration` calls `AuthenticationService.ensureBootstrapAdmin()` at startup to seed the single admin account from `distributed.fs.bootstrap-admin.*` when needed.
-7. `WorkerAuthorizationInterceptor` allows worker requests only when the authenticated user carries the persisted admin flag.
-8. Expired access or refresh tokens are removed eagerly during authentication/refresh.
+5. `AuthenticationService.logout()` revokes the current user's refresh session and active access session when the refresh cookie is presented.
+6. `AuthenticationInterceptor` hashes bearer access tokens, resolves the active access session, and stores the authenticated user on the request.
+7. `ServiceConfiguration` calls `AuthenticationService.ensureBootstrapAdmin()` at startup to seed the single admin account from `distributed.fs.bootstrap-admin.*` when needed.
+8. `WorkerAuthorizationInterceptor` allows worker requests only when the authenticated user carries the persisted admin flag.
+9. Expired access or refresh tokens are removed eagerly during authentication/refresh.
 
 ### Download
 
@@ -178,6 +179,10 @@ Fallback local metadata environment variables remain supported:
   - request: refresh token cookie
   - response: fresh bearer access token, expiry, authenticated user
   - side effect: rotates refresh token cookie
+- `POST /api/v1/auth/logout`
+  - request: optional refresh token cookie
+  - response: empty success response
+  - side effect: clears the refresh cookie and revokes the current user's active access/refresh sessions when the cookie matches a live refresh session
 
 ### File API (`/api/v1/files`)
 
@@ -242,11 +247,13 @@ Current tests validate behavior changes requested in `plan.md`:
   - metadata persistence across cluster rebuilds
 - `UserFileServiceTest`
   - registration/login/access-token plus refresh-token rotation behavior
+  - logout revocation of the current access and refresh sessions
   - per-user namespace isolation for identical public logical paths
 - `DirectTransferServiceTest`
   - direct upload session creation, signed upload target planning, finalize behavior, and dedup-aware object reuse
 - `AuthControllerIntegrationTest`
   - secure refresh-cookie issuance and refresh rotation over the real HTTP path
+  - logout cookie clearing and refresh-session revocation behavior
 - `FileControllerIntegrationTest`
   - authenticated file API behavior, including direct upload session HTTP flows
 - `BackgroundWorkerServiceTest`

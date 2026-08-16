@@ -69,6 +69,7 @@ This project demonstrates my approach to designing and delivering robust backend
 - `POST /api/v1/auth/register` creates a user, returns a 15-minute bearer access token, and sets a refresh token cookie.
 - `POST /api/v1/auth/login` rotates to a fresh access token plus refresh token cookie for an existing user.
 - `POST /api/v1/auth/refresh` exchanges the refresh cookie for a new access token and rotated refresh cookie.
+- `POST /api/v1/auth/logout` revokes the current refresh session, deletes the active access session for that user, and clears the refresh cookie.
 - File and worker APIs require `Authorization: Bearer <token>`.
 - Startup seeds a single bootstrap admin user from `distributed.fs.bootstrap-admin.email` and
   `distributed.fs.bootstrap-admin.password` when no admin exists yet.
@@ -100,6 +101,7 @@ Base path: `/api/v1`
 - `POST /auth/register` - create a user account, return access token, set refresh cookie
 - `POST /auth/login` - authenticate, return access token, set refresh cookie
 - `POST /auth/refresh` - rotate refresh cookie and return a new access token
+- `POST /auth/logout` - revoke current login session and clear refresh cookie
 
 ### Files
 
