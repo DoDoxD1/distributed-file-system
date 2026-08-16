@@ -15,8 +15,11 @@ This project demonstrates my approach to designing and delivering robust backend
   garbage collection, and legacy local-to-bucket chunk migration.
 - Added hybrid auth with short-lived access tokens, secure refresh cookies, per-user file namespaces,
   and bootstrap-admin-only worker execution.
+- Added Oracle Object Storage direct-upload sessions with signed upload targets, dedup-aware finalize,
+  and object-backed version retrieval through the existing file API.
 - Exposed REST APIs with centralized exception mapping and boundary validation.
 - Added a pluggable chunk-storage layer with both local filesystem and Oracle Object Storage backends.
+- Added centralized CORS configuration for frontend development and deployed browser clients.
 - Added interactive Swagger UI and OpenAPI docs for quick API exploration.
 - Added JUnit tests that exercise gateway and worker behavior through a local in-process cluster.
 
@@ -75,10 +78,20 @@ This project demonstrates my approach to designing and delivering robust backend
 - Access tokens live 15 minutes by default and refresh tokens live 24 hours by default.
 - Refresh tokens are issued as `HttpOnly` cookies and default to `Secure` plus `SameSite=Strict`.
 
+### 6) Direct object transfer
+
+- `POST /api/v1/files/direct/upload-sessions` plans Oracle-backed direct uploads and returns session
+  status plus signed upload instructions when the file still needs to be uploaded.
+- Uploaded objects are deduplicated per user by `(owner_user_id, sha256, size_bytes)`.
+- `POST /api/v1/files/direct/upload-sessions/{sessionId}/finalize` verifies staged object size and
+  checksum metadata before committing a new file version.
+- Direct-upload-backed versions are still downloaded through `GET /api/v1/files/content`, so the
+  control-plane API remains the retrieval surface even when the bucket stores the file bytes.
+
 ## API summary
 
-Deployed base URL: `https://dfs-api.duckdns.org`
-Swagger UI: `https://dfs-api.duckdns.org/swagger-ui.html`
+Deployed base URL: [https://dfs-api.duckdns.org](https://dfs-api.duckdns.org)
+Swagger UI: [https://dfs-api.duckdns.org/swagger-ui.html](https://dfs-api.duckdns.org/swagger-ui.html)
 
 Base path: `/api/v1`
 
@@ -92,6 +105,9 @@ Base path: `/api/v1`
 
 - All file endpoints require `Authorization: Bearer <token>`.
 - `POST /files` - upload base64 payload (optional idempotency key)
+- `POST /files/direct/upload-sessions` - create a direct upload session for Oracle-backed signed upload
+- `GET /files/direct/upload-sessions/{sessionId}` - fetch the latest direct upload session state and upload target
+- `POST /files/direct/upload-sessions/{sessionId}/finalize` - verify uploaded object metadata and commit a manifest
 - `GET /files/content` - download payload as base64
 - `GET /files/manifest` - fetch manifest by path/version (`includeDeleted` optional)
 - `DELETE /files` - tombstone latest or specific version
@@ -146,12 +162,14 @@ Supported keys under `distributed.fs`:
 - `bootstrap-admin.password`
 - `max-file-size-bytes`
 - `max-user-storage-bytes`
+- `direct-upload-session-ttl-seconds`
 - `access-token-ttl-seconds`
 - `refresh-token-ttl-seconds`
 - `refresh-cookie-name`
 - `refresh-cookie-path`
 - `refresh-cookie-secure`
 - `refresh-cookie-same-site`
+- `cors-allowed-origin-patterns`
 - `storage-root`
 - `oracle-object-storage.namespace`
 - `oracle-object-storage.bucket`
@@ -185,6 +203,9 @@ For local development, Spring Boot also imports an optional repo-root `.env` fil
 
 For Oracle Object Storage local development, keep the OCI config path and bucket settings in `.env`, and
 store the OCI profile plus private key outside the repository.
+
+For browser-based direct uploads to Oracle Object Storage, configure bucket-side CORS in addition to the
+API-side `distributed.fs.cors-allowed-origin-patterns` setting.
 
 If you run locally over plain HTTP, a browser will not send a `Secure` refresh cookie. The default
 is intentionally secure for production. Override `distributed.fs.refresh-cookie-secure=false` only
@@ -221,15 +242,12 @@ Typical Oracle VM deployment shape for this project:
 - Metadata is durable in PostgreSQL, but overall system availability still depends on the single app host and the chosen chunk backend configuration.
 - Worker execution is API-triggered, not scheduled.
 - Metadata replication and consensus are not included yet.
-- File uploads and downloads still proxy payload bytes through the API process instead of using direct bucket transfer.
+- Standard base64 uploads and all downloads still flow through the API process.
+- Direct upload currently covers Oracle-backed upload bytes only; signed direct-download URLs and resumable multipart upload support are not implemented yet.
 
 ## Future enhancements
 
-- Replace API-proxied large file transfer with a pre-signed upload flow:
-  - client requests an upload session from the API
-  - API returns a pre-signed object-storage URL plus expected metadata
-  - client uploads bytes directly to the storage bucket
-  - API finalizes the manifest after validating the uploaded object
+- Expand the direct-transfer flow with signed download URLs, resumable multipart upload support, and staged-object cleanup for abandoned upload sessions.
 - Add scheduled worker execution so scan, repair, and GC can run without manual API calls.
 - Add metadata replication and consensus for control-plane durability.
 - Add rate limiting, quotas, and admission control for large or concurrent uploads.

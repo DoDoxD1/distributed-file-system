@@ -13,6 +13,9 @@ The system already provides:
 - Hybrid authentication with short-lived access tokens and refresh-token cookies
 - Per-user logical namespace isolation
 - Configurable chunk storage using either local filesystem nodes or Oracle Object Storage
+- Oracle Object Storage direct-upload sessions with signed PUT targets, finalize verification, and per-user deduplicated object-backed versions
+- Public operational health and version endpoints
+- Centralized API CORS configuration for localhost development and deployed browser frontends
 - Integration-style coverage for gateway, worker, and auth flows
 
 ## Production-readiness gaps
@@ -21,22 +24,30 @@ The main reasons this should still be treated as an MVP are:
 
 - Worker execution is manual and API-triggered instead of scheduled
 - Oracle Object Storage cutovers still rely on an operator-triggered migration step
-- File uploads and downloads still pass through the API process instead of using direct client-to-bucket transfer
+- Standard base64 uploads and all downloads still pass through the API process
+- Direct upload exists for Oracle-backed upload bytes, but signed direct downloads, resumable multipart upload, and abandoned-session cleanup are not implemented yet
 - Rate limiting and admission control are not implemented
 - Operational observability is still limited
 - Recovery and deployment runbooks need to be formalized
 - Secure refresh-cookie flow assumes HTTPS in real deployments
 
-## Selected direction for direct file transfer
+## Current direct file transfer posture
 
-The chosen path for the next file-transfer architecture is direct object transfer with API-issued signed URLs and user-level deduplication.
+The project has now started the chosen direct-transfer architecture: direct object upload with API-issued signed URLs and user-level deduplication.
 
 That means:
 
-- The API remains the control plane for authentication, path ownership, session issuance, object verification, and metadata commit
-- The object storage bucket becomes the data plane for file upload and download
+- The API already acts as the control plane for authentication, path ownership, upload-session issuance, staged-object verification, and metadata commit
+- Oracle Object Storage already acts as the upload data plane for direct-upload sessions
 - Deduplication is scoped per user with the identity `(owner_user_id, sha256, size_bytes)`
-- Existing chunked API endpoints can remain in place during rollout for backward compatibility
+- Existing chunked API endpoints remain in place for backward compatibility and for non-direct-upload flows
+
+What is still missing from the full rollout:
+
+- Signed direct-download URLs
+- Resumable or multipart upload support for very large objects
+- Cleanup of abandoned staging objects and expired upload sessions
+- Clear operator tooling and runbooks for mixed chunk-backed and object-backed data
 
 The rejected alternatives were client-side chunking with signed chunk URLs and direct upload followed by asynchronous ingest into chunked storage. Both keep more complexity in the client or in background processing than this project needs for the next iteration.
 
@@ -69,7 +80,7 @@ Goal: improve resilience against misuse and strengthen trust boundaries.
 
 - Add rate limiting for authentication and file APIs
 - Add audit-friendly security logging for login, refresh, and worker invocations
-- Review CORS and cookie policy for cross-origin deployments
+- Validate bucket-side CORS plus cookie policy for cross-origin browser deployments
 - Add stronger operational guidance around secrets, credential rotation, and least-privilege database access
 - Extend role-based authorization to future administrative endpoints
 
@@ -87,9 +98,9 @@ Goal: make failures visible and diagnosable without manual digging.
 
 Goal: improve adoption, usability, and day-2 developer experience.
 
-- Implement the selected direct-transfer architecture: API-issued signed upload and download URLs, user-owned object keys, finalize verification, and user-level dedup with `(owner_user_id, sha256, size_bytes)`
+- Expand the current direct-transfer architecture with signed download URLs, resumable multipart upload, staged-object cleanup, and clearer client integration guidance
 - Publish a maintained Postman collection for auth and file flows
-- Document example client flows for register, login, refresh, upload, and download
+- Document example client flows for register, login, refresh, standard upload, direct upload, finalize, and download
 - Improve error response consistency and troubleshooting guidance
 - Add deployment examples for local, VM, and managed-database setups
 - Expand developer docs for common operational tasks
@@ -99,7 +110,7 @@ Goal: improve adoption, usability, and day-2 developer experience.
 If only a few items are implemented next, these would likely provide the biggest return:
 
 1. Add scheduled background workers and cron-style execution control
-2. Implement Choice A: direct client-to-bucket transfer with API-issued signed URLs and user-level dedup
+2. Complete the remaining direct-transfer rollout: signed downloads, resumable uploads, and lifecycle cleanup around direct-upload sessions
 3. Add deployment and recovery runbooks
 4. Add rate limiting to auth and upload APIs
 5. Add metrics, alerts, and structured operational logs
@@ -109,7 +120,7 @@ If only a few items are implemented next, these would likely provide the biggest
 For a more production-oriented distributed storage system, the longer horizon could include:
 
 - Automated cutover tooling for legacy local chunks after a backend switch
-- Full rollout of the selected direct-transfer model across upload, download, dedup finalization, cleanup, and migration tooling
+- Full rollout of the current direct-transfer model across signed downloads, resumable upload, dedup finalization, cleanup, and migration tooling
 - Multi-host or externalized chunk storage instead of single-host local disk
 - Better health-aware or load-aware placement decisions
 - Metadata snapshots and stronger disaster recovery guarantees
@@ -120,6 +131,6 @@ For a more production-oriented distributed storage system, the longer horizon co
 
 ## Recommendation
 
-The current system is strong enough to deploy as an MVP and showcase end-to-end engineering ability. The next milestone should be operational hardening, not major feature expansion. Reliability, security, and observability improvements will increase real deployment confidence more than adding new user-facing features first.
+The current system is strong enough to deploy as an MVP and showcase end-to-end engineering ability. The next milestone should be operational hardening plus completion of the direct-transfer edges that are already partially implemented. Reliability, security, and observability improvements will increase real deployment confidence more than adding unrelated user-facing features first.
 
-Once that hardening work is in place, the selected storage-transfer evolution is Choice A: direct client-to-bucket transfer with API-controlled session lifecycle and user-level dedup.
+The chosen storage-transfer evolution remains direct client-to-bucket transfer with API-controlled session lifecycle and user-level dedup; the next work should finish that rollout rather than redesign it.

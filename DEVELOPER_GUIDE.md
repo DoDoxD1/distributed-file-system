@@ -16,6 +16,8 @@ The implementation preserves control-plane/data-plane separation:
   - `StorageNode` defines checksum-verified immutable chunk persistence.
   - `LocalStorageNode` persists chunk replicas under `storageRoot/<nodeId>/chunks`.
   - `OracleObjectStorageNode` persists chunk replicas in Oracle Object Storage through `OracleObjectStorageBucketClient`.
+  - `DirectTransferService` plans direct object uploads, verifies staged objects, and commits deduplicated object-backed versions.
+  - `OperationalStatusService` exposes system health and version metadata for public operational endpoints.
 - Background workers:
   - `BackgroundWorkerService` runs scan, repair, GC, and legacy local-to-bucket migration flows.
 
@@ -23,19 +25,20 @@ The implementation preserves control-plane/data-plane separation:
 
 - `com.distributedfs.config`
   - `DistributedFsProperties`
+  - `FrontendUrlConstants`
   - `ServiceConfiguration`
   - `WebConfiguration`
   - `OpenApiConfiguration`
 - `com.distributedfs.model`
-  - `AuthenticatedUser`, `AuthenticatedSession`, `FileManifest`, `ChunkRecord`, `ChunkWrite`, `FileListing`
+  - `AuthenticatedUser`, `AuthenticatedSession`, `FileManifest`, `ChunkRecord`, `ChunkWrite`, `FileListing`, `DirectUploadSession`, `DirectUploadTarget`, `StoredObject`, `SystemHealth`, `ApplicationVersionInfo`
 - `com.distributedfs.service`
-  - `AuthenticationService`, `UserFileService`, `MetadataService`, `GatewayService`, `StorageNode`, `LocalStorageNode`, `OracleObjectStorageNode`, `OracleObjectStorageBucketClient`, `OciOracleObjectStorageBucketClient`, `BackgroundWorkerService`
+  - `AuthenticationService`, `UserFileService`, `MetadataService`, `GatewayService`, `DirectTransferService`, `StorageNode`, `LocalStorageNode`, `OracleObjectStorageNode`, `OracleObjectStorageBucketClient`, `OciOracleObjectStorageBucketClient`, `BackgroundWorkerService`, `OperationalStatusService`
 - `com.distributedfs.placement`
   - `RackAwarePlacementStrategy`
 - `com.distributedfs.cluster`
   - `LocalCluster`, `LocalClusterFactory`
 - `com.distributedfs.api`
-  - `AuthController`, `FileController`, `WorkerController`, `AuthenticationInterceptor`, `WorkerAuthorizationInterceptor`, `RequestUserContext`, `GlobalExceptionHandler`
+  - `AuthController`, `FileController`, `WorkerController`, `OperationalController`, `AuthenticationInterceptor`, `WorkerAuthorizationInterceptor`, `RequestUserContext`, `GlobalExceptionHandler`
 
 ## Data flow details
 
@@ -50,6 +53,17 @@ The implementation preserves control-plane/data-plane separation:
 7. Node writes are checksum-validated and retried on alternative healthy targets.
 8. Metadata commit is atomic and only succeeds after durable replica acknowledgements.
 9. New file version becomes visible once manifest commit completes.
+
+### Direct upload (Oracle Object Storage)
+
+1. API layer authenticates the bearer token and loads the request user.
+2. `DirectTransferService.createUploadSession()` validates path, checksum, size, content type, and optional idempotency key.
+3. Metadata either reuses an existing deduplicated stored object for the same `(owner_user_id, sha256, size_bytes)` or creates a new upload session in `AWAITING_UPLOAD` state.
+4. When upload is required, `OracleObjectStorageBucketClient.createUploadTarget()` returns a signed PUT target for the session staging object.
+5. The client uploads bytes directly to Oracle Object Storage with the expected checksum metadata.
+6. `DirectTransferService.finalizeUploadSession()` verifies staged object existence, size, and checksum before promoting it to the canonical object key.
+7. `MetadataService.commitDirectUploadSession()` commits the resulting manifest transactionally, links the file version to the stored object, and records the completed version ID on the session.
+8. Subsequent downloads continue through the authenticated file API, which now supports object-backed versions in addition to chunk-backed versions.
 
 ### Authentication
 
@@ -68,8 +82,9 @@ The implementation preserves control-plane/data-plane separation:
 2. `UserFileService` rewrites the public logical path into the user's private namespace.
 3. Gateway resolves the target manifest (latest active or explicit version).
 4. Chunks are read from available replicas.
-5. Per-chunk and whole-file checksums are verified.
-6. Payload is returned to caller as bytes.
+5. For direct-upload-backed versions, Gateway resolves the linked stored object and downloads it through the optional Oracle bucket client.
+6. Per-chunk or whole-object checksums are verified.
+7. Payload is returned to caller as bytes.
 
 ### Delete
 
@@ -101,6 +116,13 @@ The implementation preserves control-plane/data-plane separation:
 4. `BackgroundWorkerService` walks each legacy `storageRoot/<nodeId>/chunks` directory.
 5. Each chunk is checksum-verified through `StorageNode.writeChunk()` before the local source is deleted.
 6. The flow is idempotent for already-migrated bucket objects because duplicate writes are checksum-checked.
+
+### Operational endpoints
+
+1. `OperationalController` exposes unauthenticated `/api/v1/system/health` and `/api/v1/system/version` endpoints.
+2. `OperationalStatusService.health()` executes a real metadata database ping using `select 1` and returns `UP` status only when the query succeeds.
+3. Database failures are surfaced as HTTP 503 through `ServiceUnavailableException`.
+4. `OperationalStatusService.version()` returns the Spring application name and resolved build version metadata.
 
 ## Consistency and durability semantics
 
@@ -163,6 +185,15 @@ Fallback local metadata environment variables remain supported:
 - `POST /api/v1/files`
   - request: logical path, base64 payload, optional idempotency key
   - response: committed manifest with `ownerUserId`
+- `POST /api/v1/files/direct/upload-sessions`
+  - request: logical path, checksum SHA-256, size bytes, optional content type, optional idempotency key
+  - response: `DirectUploadSessionResponse` including session status, optional signed upload target, and optional committed version ID
+- `GET /api/v1/files/direct/upload-sessions/{sessionId}`
+  - request: session ID path parameter
+  - response: latest `DirectUploadSessionResponse` for the authenticated user
+- `POST /api/v1/files/direct/upload-sessions/{sessionId}/finalize`
+  - request: session ID path parameter
+  - response: committed manifest after staged object verification and object-backed version linking
 - `GET /api/v1/files/content`
   - request: path, optional version ID
   - response: base64 payload
@@ -212,20 +243,31 @@ Current tests validate behavior changes requested in `plan.md`:
 - `UserFileServiceTest`
   - registration/login/access-token plus refresh-token rotation behavior
   - per-user namespace isolation for identical public logical paths
+- `DirectTransferServiceTest`
+  - direct upload session creation, signed upload target planning, finalize behavior, and dedup-aware object reuse
 - `AuthControllerIntegrationTest`
   - secure refresh-cookie issuance and refresh rotation over the real HTTP path
+- `FileControllerIntegrationTest`
+  - authenticated file API behavior, including direct upload session HTTP flows
 - `BackgroundWorkerServiceTest`
   - replica scan+repair lifecycle
   - retention-based garbage collection
   - local-to-bucket migration behavior against Oracle-backed nodes using an in-memory bucket client
+- `OperationalStatusServiceTest`
+  - database ping success/failure mapping and version payload behavior
+- `OperationalControllerIntegrationTest`
+  - public system endpoint behavior for health and version routes
 - `OracleObjectStorageNodeTest`
   - Oracle-backed node read/write/list/delete behavior and object-prefix handling
 - `DistributedFsPropertiesTest`
   - backend-selection validation for Oracle Object Storage configuration
   - bootstrap-admin configuration validation and normalization
+  - CORS allowed-origin-pattern normalization and validation
 - `WorkerControllerIntegrationTest`
   - bootstrap-admin-only worker authorization
   - authenticated migration endpoint behavior when the Oracle backend is not active
+- `OpenApiConfigurationTest`
+  - OpenAPI security scheme and documentation metadata wiring
 
 Tests are integration-style using `LocalClusterFactory` with per-test temporary storage directories and a file-backed H2 metadata database migrated with Flyway.
 
@@ -234,7 +276,8 @@ Tests are integration-style using `LocalClusterFactory` with per-test temporary 
 - Metadata durability depends on the configured relational database instance; the single app host still coordinates all worker execution and API traffic.
 - Worker scheduling is manual/API-triggered; no periodic scheduler yet.
 - No rate limiting/backpressure controls yet.
-- File upload and download bytes still transit the API process instead of going directly between client and object storage.
+- Standard base64 uploads and all downloads still transit the API process.
+- Direct upload is implemented only for Oracle-backed upload bytes; signed direct downloads, resumable multipart upload, and abandoned-session cleanup are still pending.
 
 Natural next hardening milestones:
 
@@ -242,4 +285,4 @@ Natural next hardening milestones:
 2. Add health scoring and rebalancing logic.
 3. Add quotas, admission control, and rate limiting.
 4. Add background scheduling and metrics export.
-5. Add pre-signed object-storage upload and download flows so clients can transfer large files directly and the API can focus on auth, manifest validation, and commit.
+5. Expand the current direct-transfer flow with signed download URLs, resumable multipart upload, and lifecycle cleanup for staged objects and expired sessions.
