@@ -13,6 +13,7 @@ import com.distributedfs.config.OpenApiConfiguration;
 import com.distributedfs.error.PayloadTooLargeException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.model.AuthenticatedUser;
+import com.distributedfs.model.DirectUploadTarget;
 import com.distributedfs.model.DirectUploadSession;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
@@ -99,7 +100,8 @@ public class FileController {
             request.contentType(),
             request.idempotencyKey()
         );
-        return DirectUploadSessionResponse.fromSession(session);
+        DirectUploadTarget uploadTarget = directTransferService.getUploadTarget(session);
+        return DirectUploadSessionResponse.fromSession(session, uploadTarget);
     }
 
     @Operation(
@@ -113,7 +115,22 @@ public class FileController {
     ) {
         AuthenticatedUser user = RequestUserContext.requireAuthenticatedUser(httpRequest);
         DirectUploadSession session = directTransferService.getUploadSession(user, sessionId);
-        return DirectUploadSessionResponse.fromSession(session);
+        DirectUploadTarget uploadTarget = directTransferService.getUploadTarget(session);
+        return DirectUploadSessionResponse.fromSession(session, uploadTarget);
+    }
+
+    @Operation(
+        summary = "Finalize direct upload session",
+        description = "Verifies the uploaded staging object, commits it as a new file version, and returns the resulting manifest."
+    )
+    @PostMapping(value = "/direct/upload-sessions/{sessionId}/finalize", produces = MediaType.APPLICATION_JSON_VALUE)
+    public UploadFileResponse finalizeDirectUploadSession(
+        @PathVariable String sessionId,
+        HttpServletRequest httpRequest
+    ) {
+        AuthenticatedUser user = RequestUserContext.requireAuthenticatedUser(httpRequest);
+        FileManifest manifest = directTransferService.finalizeUploadSession(user, sessionId);
+        return new UploadFileResponse(FileManifestResponse.fromManifest(manifest));
     }
 
     @Operation(

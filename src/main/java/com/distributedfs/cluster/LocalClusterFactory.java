@@ -42,6 +42,13 @@ public final class LocalClusterFactory {
      * @return assembled local cluster
      */
     public static LocalCluster build(DistributedFsProperties properties) {
+        return build(properties, null);
+    }
+
+    public static LocalCluster build(
+        DistributedFsProperties properties,
+        OracleObjectStorageBucketClient bucketClientOverride
+    ) {
         properties.validateCrossFieldConstraints();
         Path storageRoot = properties.getStorageRoot();
         try {
@@ -55,8 +62,11 @@ public final class LocalClusterFactory {
 
         List<StorageNode> nodeList = new ArrayList<>();
         String storageBackend = properties.getStorageBackend().strip().toLowerCase();
-        OracleObjectStorageBucketClient bucketClient = null;
-        if (DistributedFsProperties.STORAGE_BACKEND_ORACLE_OBJECT_STORAGE.equals(storageBackend)) {
+        OracleObjectStorageBucketClient bucketClient = bucketClientOverride;
+        if (
+            bucketClient == null
+                && DistributedFsProperties.STORAGE_BACKEND_ORACLE_OBJECT_STORAGE.equals(storageBackend)
+        ) {
             bucketClient = new OciOracleObjectStorageBucketClient(properties.getOracleObjectStorage());
         }
         for (int index = 0; index < properties.getNodeCount(); index++) {
@@ -116,11 +126,13 @@ public final class LocalClusterFactory {
             metadataService,
             nodeMap,
             placementStrategy,
-            properties
+            properties,
+            bucketClient
         );
         DirectTransferService directTransferService = new DirectTransferService(
             metadataService,
             properties,
+            bucketClient,
             timeProvider
         );
         UserStorageQuotaService userStorageQuotaService = new UserStorageQuotaService(

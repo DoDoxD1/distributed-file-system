@@ -183,9 +183,16 @@ public class ServiceConfiguration {
     public GatewayService gatewayService(
         MetadataService metadataService,
         Map<String, StorageNode> storageNodes,
-        RackAwarePlacementStrategy placementStrategy
+        RackAwarePlacementStrategy placementStrategy,
+        ObjectProvider<OracleObjectStorageBucketClient> bucketClientProvider
     ) {
-        return new GatewayService(metadataService, storageNodes, placementStrategy, properties);
+        return new GatewayService(
+            metadataService,
+            storageNodes,
+            placementStrategy,
+            properties,
+            bucketClientProvider.getIfAvailable()
+        );
     }
 
     @Bean
@@ -205,9 +212,15 @@ public class ServiceConfiguration {
     @Bean
     public DirectTransferService directTransferService(
         MetadataService metadataService,
+        ObjectProvider<OracleObjectStorageBucketClient> bucketClientProvider,
         TimeProvider timeProvider
     ) {
-        return new DirectTransferService(metadataService, properties, timeProvider);
+        return new DirectTransferService(
+            metadataService,
+            properties,
+            bucketClientProvider.getIfAvailable(),
+            timeProvider
+        );
     }
 
     @Bean

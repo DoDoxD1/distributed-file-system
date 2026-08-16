@@ -1,5 +1,4 @@
- 
- package com.distributedfs.service;
+package com.distributedfs.service;
 
 import com.distributedfs.config.DistributedFsProperties;
 import com.distributedfs.error.ChunkIntegrityException;
@@ -13,6 +12,7 @@ import com.distributedfs.model.ChunkRecord;
 import com.distributedfs.model.ChunkWrite;
 import com.distributedfs.model.FileListing;
 import com.distributedfs.model.FileManifest;
+import com.distributedfs.model.StoredObject;
 import com.distributedfs.placement.RackAwarePlacementStrategy;
 import com.distributedfs.util.ChunkingUtil;
 import com.distributedfs.util.HashingUtil;
@@ -41,10 +41,10 @@ public class GatewayService {
     private final Map<String, StorageNode> storageNodes;
     private final RackAwarePlacementStrategy placementStrategy;
     private final DistributedFsProperties properties;
+    private final OracleObjectStorageBucketClient bucketClient;
 
     /**
      * Creates the gateway orchestrator.
-     *
      * @param metadataService metadata authority
      * @param storageNodes available storage nodes
      * @param placementStrategy replica placement strategy
@@ -54,12 +54,14 @@ public class GatewayService {
         MetadataService metadataService,
         Map<String, StorageNode> storageNodes,
         RackAwarePlacementStrategy placementStrategy,
-        DistributedFsProperties properties
+        DistributedFsProperties properties,
+        OracleObjectStorageBucketClient bucketClient
     ) {
         this.metadataService = metadataService;
         this.storageNodes = Map.copyOf(storageNodes);
         this.placementStrategy = placementStrategy;
         this.properties = properties;
+        this.bucketClient = bucketClient;
 
         if (this.storageNodes.isEmpty()) {
             throw new ValidationException("storageNodes must include at least one node");
@@ -177,6 +179,26 @@ public class GatewayService {
             normalizedVersionId,
             false
         );
+
+        Optional<StoredObject> directStoredObject = metadataService.findStoredObjectByVersionId(
+            manifest.versionId()
+        );
+        if (directStoredObject.isPresent()) {
+            if (bucketClient == null) {
+                throw new DistributedFsException(
+                    "Object-backed file versions require the oracle-object-storage backend"
+                );
+            }
+            byte[] payload = bucketClient.getObject(directStoredObject.get().objectKey());
+            String actualFileChecksum = HashingUtil.sha256Hex(payload);
+            if (!actualFileChecksum.equals(manifest.checksum())) {
+                throw new ChunkIntegrityException(
+                    "File checksum mismatch for " + normalizedPath + "@" + manifest.versionId()
+                        + ": " + actualFileChecksum + " != " + manifest.checksum()
+                );
+            }
+            return payload;
+        }
 
         try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             for (String chunkId : manifest.chunkIds()) {

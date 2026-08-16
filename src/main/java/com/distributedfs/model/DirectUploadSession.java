@@ -13,6 +13,7 @@ public record DirectUploadSession(
     String stagingObjectKey,
     DirectUploadSessionStatus status,
     String resolvedObjectId,
+    String committedVersionId,
     Instant createdAt,
     Instant expiresAt
 ) {

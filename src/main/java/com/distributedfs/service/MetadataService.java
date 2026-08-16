@@ -3,6 +3,7 @@ package com.distributedfs.service;
 import com.distributedfs.error.ChunkNotFoundException;
 import com.distributedfs.error.LogicalFileNotFoundException;
 import com.distributedfs.error.MetadataConflictException;
+import com.distributedfs.error.StorageQuotaExceededException;
 import com.distributedfs.error.UploadSessionNotFoundException;
 import com.distributedfs.error.ValidationException;
 import com.distributedfs.error.VersionDeletedException;
@@ -388,7 +389,7 @@ public class MetadataService {
             """
             select session_id, owner_user_id, logical_path, expected_checksum_sha256,
                 expected_size_bytes, content_type, idempotency_key, staging_object_key,
-                status, resolved_object_id, created_at, expires_at
+                status, resolved_object_id, committed_version_id, created_at, expires_at
             from dfs_upload_sessions
             where owner_user_id = ? and logical_path = ? and idempotency_key = ?
             """,
@@ -403,6 +404,7 @@ public class MetadataService {
                 resultSet.getString("staging_object_key"),
                 DirectUploadSessionStatus.valueOf(resultSet.getString("status")),
                 resultSet.getString("resolved_object_id"),
+                resultSet.getString("committed_version_id"),
                 getInstant(resultSet, "created_at"),
                 getInstant(resultSet, "expires_at")
             ),
@@ -461,9 +463,10 @@ public class MetadataService {
                         staging_object_key,
                         status,
                         resolved_object_id,
+                        committed_version_id,
                         created_at,
                         expires_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     normalizedSessionId,
                     normalizedOwnerUserId,
@@ -475,6 +478,7 @@ public class MetadataService {
                     normalizedStagingObjectKey,
                     normalizedStatus.name(),
                     normalizedResolvedObjectId,
+                    null,
                     toTimestamp(normalizedCreatedAt),
                     toTimestamp(normalizedExpiresAt)
                 );
@@ -549,6 +553,59 @@ public class MetadataService {
         return Optional.of(copyStoredObject(storedObjectRow.toStoredObject()));
     }
 
+    public Optional<StoredObject> findStoredObjectById(String objectId) {
+        String normalizedObjectId = requireNonBlank(objectId, "objectId");
+        StoredObjectRow storedObjectRow = querySingle(
+            """
+            select object_id, owner_user_id, checksum_sha256, size_bytes, object_key,
+                reference_count, created_at
+            from dfs_stored_objects
+            where object_id = ?
+            """,
+            (resultSet, rowNum) -> new StoredObjectRow(
+                resultSet.getString("object_id"),
+                resultSet.getString("owner_user_id"),
+                resultSet.getString("checksum_sha256"),
+                resultSet.getLong("size_bytes"),
+                resultSet.getString("object_key"),
+                resultSet.getLong("reference_count"),
+                getInstant(resultSet, "created_at")
+            ),
+            normalizedObjectId
+        );
+        if (storedObjectRow == null) {
+            return Optional.empty();
+        }
+        return Optional.of(copyStoredObject(storedObjectRow.toStoredObject()));
+    }
+
+    public Optional<StoredObject> findStoredObjectByVersionId(String versionId) {
+        String normalizedVersionId = requireNonBlank(versionId, "versionId");
+        StoredObjectRow storedObjectRow = querySingle(
+            """
+            select so.object_id, so.owner_user_id, so.checksum_sha256, so.size_bytes,
+                so.object_key, so.reference_count, so.created_at
+            from dfs_file_version_objects fvo
+            join dfs_stored_objects so on so.object_id = fvo.object_id
+            where fvo.version_id = ?
+            """,
+            (resultSet, rowNum) -> new StoredObjectRow(
+                resultSet.getString("object_id"),
+                resultSet.getString("owner_user_id"),
+                resultSet.getString("checksum_sha256"),
+                resultSet.getLong("size_bytes"),
+                resultSet.getString("object_key"),
+                resultSet.getLong("reference_count"),
+                getInstant(resultSet, "created_at")
+            ),
+            normalizedVersionId
+        );
+        if (storedObjectRow == null) {
+            return Optional.empty();
+        }
+        return Optional.of(copyStoredObject(storedObjectRow.toStoredObject()));
+    }
+
     public StoredObject createStoredObject(
         String ownerUserId,
         String checksumSha256,
@@ -610,6 +667,178 @@ public class MetadataService {
         return copyStoredObject(Objects.requireNonNull(storedObject));
     }
 
+    public FileManifest commitDirectUploadSession(
+        String ownerUserId,
+        String sessionId,
+        String resolvedObjectId,
+        long maxUserStorageBytes
+    ) {
+        String normalizedOwnerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        String normalizedSessionId = requireNonBlank(sessionId, "sessionId");
+        String normalizedResolvedObjectId = requireNonBlank(resolvedObjectId, "resolvedObjectId");
+        if (maxUserStorageBytes < 0) {
+            throw new ValidationException(
+                "maxUserStorageBytes must be non-negative, got " + maxUserStorageBytes
+            );
+        }
+
+        try {
+            FileManifest manifest = transactionTemplate.execute(transactionStatus -> {
+                lockUserRow(normalizedOwnerUserId);
+                DirectUploadSession session = loadUploadSessionByIdForUpdate(normalizedSessionId);
+                if (session == null || !Objects.equals(session.ownerUserId(), normalizedOwnerUserId)) {
+                    throw new UploadSessionNotFoundException(
+                        "Upload session " + normalizedSessionId + " does not exist for user "
+                            + normalizedOwnerUserId
+                    );
+                }
+                if (session.committedVersionId() != null) {
+                    return Objects.requireNonNull(loadManifestByVersionId(session.committedVersionId()));
+                }
+                if (session.expiresAt().isBefore(timeProvider.now())) {
+                    throw new ValidationException(
+                        "Direct upload session " + normalizedSessionId + " has expired"
+                    );
+                }
+                if (
+                    session.resolvedObjectId() != null
+                        && !Objects.equals(session.resolvedObjectId(), normalizedResolvedObjectId)
+                ) {
+                    throw new MetadataConflictException(
+                        "Direct upload session " + normalizedSessionId
+                            + " is already bound to a different stored object"
+                    );
+                }
+
+                StoredObject storedObject = findStoredObjectById(normalizedResolvedObjectId)
+                    .orElseThrow(() -> new MetadataConflictException(
+                        "Stored object does not exist for finalize: " + normalizedResolvedObjectId
+                    ));
+                if (!Objects.equals(storedObject.ownerUserId(), normalizedOwnerUserId)) {
+                    throw new MetadataConflictException(
+                        "Stored object " + normalizedResolvedObjectId
+                            + " does not belong to user " + normalizedOwnerUserId
+                    );
+                }
+                if (!Objects.equals(storedObject.checksumSha256(), session.checksumSha256())) {
+                    throw new MetadataConflictException(
+                        "Stored object checksum does not match upload session " + normalizedSessionId
+                    );
+                }
+                if (storedObject.sizeBytes() != session.sizeBytes()) {
+                    throw new MetadataConflictException(
+                        "Stored object size does not match upload session " + normalizedSessionId
+                    );
+                }
+
+                if (session.idempotencyKey() != null) {
+                    Optional<FileManifest> existingManifest = findManifestByIdempotency(
+                        session.logicalPath(),
+                        session.idempotencyKey()
+                    );
+                    if (existingManifest.isPresent()) {
+                        markUploadSessionCompleted(
+                            normalizedSessionId,
+                            normalizedResolvedObjectId,
+                            existingManifest.get().versionId()
+                        );
+                        return existingManifest.get();
+                    }
+                }
+
+                long activeStorageBytes = getActiveStorageBytesForUser(normalizedOwnerUserId);
+                long projectedStorageBytes = activeStorageBytes + session.sizeBytes();
+                if (projectedStorageBytes > maxUserStorageBytes) {
+                    throw new StorageQuotaExceededException(
+                        "Upload would exceed storage quota for user " + normalizedOwnerUserId + ": "
+                            + projectedStorageBytes + " > " + maxUserStorageBytes
+                    );
+                }
+
+                String fileId = ensureFileId(session.logicalPath());
+                lockFileRow(fileId);
+
+                String versionId = newId();
+                Instant createdAt = timeProvider.now();
+                long versionNumber = nextVersionNumber(fileId);
+
+                jdbcTemplate.update(
+                    """
+                    insert into dfs_file_versions(
+                        version_id,
+                        file_id,
+                        version_number,
+                        size_bytes,
+                        checksum,
+                        created_at,
+                        idempotency_key,
+                        deleted_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    versionId,
+                    fileId,
+                    versionNumber,
+                    session.sizeBytes(),
+                    session.checksumSha256(),
+                    toTimestamp(createdAt),
+                    session.idempotencyKey(),
+                    null
+                );
+                jdbcTemplate.update(
+                    "insert into dfs_file_version_objects(version_id, object_id) values (?, ?)",
+                    versionId,
+                    normalizedResolvedObjectId
+                );
+                jdbcTemplate.update(
+                    "update dfs_stored_objects set reference_count = reference_count + 1 where object_id = ?",
+                    normalizedResolvedObjectId
+                );
+                if (session.idempotencyKey() != null) {
+                    jdbcTemplate.update(
+                        """
+                        insert into dfs_idempotency_keys(
+                            logical_path,
+                            idempotency_key,
+                            version_id
+                        ) values (?, ?, ?)
+                        """,
+                        session.logicalPath(),
+                        session.idempotencyKey(),
+                        versionId
+                    );
+                }
+                markUploadSessionCompleted(normalizedSessionId, normalizedResolvedObjectId, versionId);
+                return new FileManifest(
+                    fileId,
+                    null,
+                    session.logicalPath(),
+                    versionId,
+                    List.of(),
+                    session.sizeBytes(),
+                    session.checksumSha256(),
+                    createdAt,
+                    session.idempotencyKey(),
+                    null
+                );
+            });
+            return copyManifest(Objects.requireNonNull(manifest));
+        } catch (DuplicateKeyException error) {
+            DirectUploadSession session = getUploadSession(normalizedOwnerUserId, normalizedSessionId);
+            if (session.idempotencyKey() != null) {
+                Optional<FileManifest> existingManifest = findManifestByIdempotency(
+                    session.logicalPath(),
+                    session.idempotencyKey()
+                );
+                if (existingManifest.isPresent()) {
+                    return existingManifest.get();
+                }
+            }
+            throw new MetadataConflictException(
+                "Direct upload session commit conflicted for logical path: " + session.logicalPath()
+            );
+        }
+    }
+
     /**
      * Marks a version as deleted and releases chunk references.
      *
@@ -658,6 +887,10 @@ public class MetadataService {
                 "update dfs_file_versions set deleted_at = ? where version_id = ?",
                 toTimestamp(deletedAt),
                 targetManifest.versionId()
+            );
+
+            findStoredObjectByVersionId(targetManifest.versionId()).ifPresent(storedObject ->
+                decrementStoredObjectReference(storedObject.objectId())
             );
 
             for (String chunkId : targetManifest.chunkIds()) {
@@ -1031,7 +1264,7 @@ public class MetadataService {
             """
             select session_id, owner_user_id, logical_path, expected_checksum_sha256,
                 expected_size_bytes, content_type, idempotency_key, staging_object_key,
-                status, resolved_object_id, created_at, expires_at
+                status, resolved_object_id, committed_version_id, created_at, expires_at
             from dfs_upload_sessions
             where session_id = ?
             """,
@@ -1046,6 +1279,7 @@ public class MetadataService {
                 resultSet.getString("staging_object_key"),
                 DirectUploadSessionStatus.valueOf(resultSet.getString("status")),
                 resultSet.getString("resolved_object_id"),
+                resultSet.getString("committed_version_id"),
                 getInstant(resultSet, "created_at"),
                 getInstant(resultSet, "expires_at")
             ),
@@ -1055,6 +1289,57 @@ public class MetadataService {
             return null;
         }
         return uploadSessionRow.toDirectUploadSession();
+    }
+
+    private DirectUploadSession loadUploadSessionByIdForUpdate(String sessionId) {
+        UploadSessionRow uploadSessionRow = querySingle(
+            """
+            select session_id, owner_user_id, logical_path, expected_checksum_sha256,
+                expected_size_bytes, content_type, idempotency_key, staging_object_key,
+                status, resolved_object_id, committed_version_id, created_at, expires_at
+            from dfs_upload_sessions
+            where session_id = ?
+            for update
+            """,
+            (resultSet, rowNum) -> new UploadSessionRow(
+                resultSet.getString("session_id"),
+                resultSet.getString("owner_user_id"),
+                resultSet.getString("logical_path"),
+                resultSet.getString("expected_checksum_sha256"),
+                resultSet.getLong("expected_size_bytes"),
+                resultSet.getString("content_type"),
+                resultSet.getString("idempotency_key"),
+                resultSet.getString("staging_object_key"),
+                DirectUploadSessionStatus.valueOf(resultSet.getString("status")),
+                resultSet.getString("resolved_object_id"),
+                resultSet.getString("committed_version_id"),
+                getInstant(resultSet, "created_at"),
+                getInstant(resultSet, "expires_at")
+            ),
+            sessionId
+        );
+        if (uploadSessionRow == null) {
+            return null;
+        }
+        return uploadSessionRow.toDirectUploadSession();
+    }
+
+    private void markUploadSessionCompleted(
+        String sessionId,
+        String resolvedObjectId,
+        String committedVersionId
+    ) {
+        jdbcTemplate.update(
+            """
+            update dfs_upload_sessions
+            set status = ?, resolved_object_id = ?, committed_version_id = ?
+            where session_id = ?
+            """,
+            DirectUploadSessionStatus.COMPLETED.name(),
+            resolvedObjectId,
+            committedVersionId,
+            sessionId
+        );
     }
 
     private FileManifest loadManifestByVersionId(String versionId) {
@@ -1175,6 +1460,20 @@ public class MetadataService {
                 getInstant(resultSet, "last_unreferenced_at")
             ),
             chunkId
+        );
+    }
+
+    private void decrementStoredObjectReference(String objectId) {
+        jdbcTemplate.update(
+            """
+            update dfs_stored_objects
+            set reference_count = case
+                when reference_count > 0 then reference_count - 1
+                else 0
+            end
+            where object_id = ?
+            """,
+            objectId
         );
     }
 
@@ -1389,6 +1688,7 @@ public class MetadataService {
             session.stagingObjectKey(),
             session.status(),
             session.resolvedObjectId(),
+            session.committedVersionId(),
             session.createdAt(),
             session.expiresAt()
         );
@@ -1471,6 +1771,7 @@ public class MetadataService {
         String stagingObjectKey,
         DirectUploadSessionStatus status,
         String resolvedObjectId,
+        String committedVersionId,
         Instant createdAt,
         Instant expiresAt
     ) {
@@ -1487,6 +1788,7 @@ public class MetadataService {
                 stagingObjectKey,
                 status,
                 resolvedObjectId,
+                committedVersionId,
                 createdAt,
                 expiresAt
             );
