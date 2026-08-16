@@ -4,6 +4,7 @@ import com.distributedfs.api.AuthenticationInterceptor;
 import com.distributedfs.api.WorkerAuthorizationInterceptor;
 import com.distributedfs.service.AuthenticationService;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -11,9 +12,23 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebConfiguration implements WebMvcConfigurer {
 
     private final AuthenticationService authenticationService;
+    private final DistributedFsProperties properties;
 
-    public WebConfiguration(AuthenticationService authenticationService) {
+    public WebConfiguration(
+        AuthenticationService authenticationService,
+        DistributedFsProperties properties
+    ) {
         this.authenticationService = authenticationService;
+        this.properties = properties;
+    }
+
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/**")
+            .allowedOriginPatterns(properties.getCorsAllowedOriginPatterns().toArray(String[]::new))
+            .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+            .allowedHeaders("*")
+            .allowCredentials(true);
     }
 
     @Override

@@ -64,6 +64,9 @@ public class DistributedFsProperties {
     @NotBlank
     private String refreshCookieSameSite = "Strict";
 
+    @NotEmpty
+    private List<@NotBlank String> corsAllowedOriginPatterns = FrontendUrlConstants.DEFAULT_CORS_ALLOWED_ORIGIN_PATTERNS;
+
     private Path storageRoot = Path.of(".dfs-storage");
 
     @Valid
@@ -201,6 +204,20 @@ public class DistributedFsProperties {
         this.refreshCookieSameSite = refreshCookieSameSite;
     }
 
+    public List<String> getCorsAllowedOriginPatterns() {
+        return corsAllowedOriginPatterns;
+    }
+
+    public void setCorsAllowedOriginPatterns(List<String> corsAllowedOriginPatterns) {
+        if (corsAllowedOriginPatterns == null || corsAllowedOriginPatterns.isEmpty()) {
+            this.corsAllowedOriginPatterns = List.of();
+            return;
+        }
+        this.corsAllowedOriginPatterns = corsAllowedOriginPatterns.stream()
+            .map(this::normalizeCorsAllowedOriginPattern)
+            .toList();
+    }
+
     public Path getStorageRoot() {
         return storageRoot;
     }
@@ -250,6 +267,18 @@ public class DistributedFsProperties {
                 "maxFileSizeBytes cannot exceed maxUserStorageBytes: "
                     + maxFileSizeBytes + " > " + maxUserStorageBytes
             );
+        }
+        if (corsAllowedOriginPatterns == null || corsAllowedOriginPatterns.isEmpty()) {
+            throw new IllegalArgumentException(
+                "corsAllowedOriginPatterns must include at least one origin pattern"
+            );
+        }
+        for (String corsAllowedOriginPattern : corsAllowedOriginPatterns) {
+            if (corsAllowedOriginPattern == null || corsAllowedOriginPattern.isBlank()) {
+                throw new IllegalArgumentException(
+                    "corsAllowedOriginPatterns cannot contain blank values"
+                );
+            }
         }
         if (failureDomains == null || failureDomains.isEmpty()) {
             throw new IllegalArgumentException("failureDomains must include at least one domain");
@@ -302,6 +331,20 @@ public class DistributedFsProperties {
                 );
             }
         }
+    }
+
+    private String normalizeCorsAllowedOriginPattern(String originPattern) {
+        if (originPattern == null) {
+            return "";
+        }
+        String normalizedOriginPattern = originPattern.strip();
+        while (normalizedOriginPattern.length() > 1 && normalizedOriginPattern.endsWith("/")) {
+            normalizedOriginPattern = normalizedOriginPattern.substring(
+                0,
+                normalizedOriginPattern.length() - 1
+            );
+        }
+        return normalizedOriginPattern;
     }
 
     public static class BootstrapAdminProperties {
