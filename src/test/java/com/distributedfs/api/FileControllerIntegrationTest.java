@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.Base64;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -102,15 +103,16 @@ class FileControllerIntegrationTest {
     }
 
     private String registerAndExtractAccessToken() throws Exception {
+        String emailAddress = "upload-test-" + UUID.randomUUID() + "@example.com";
         MvcResult registerResult = mockMvc.perform(
             post("/api/v1/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "email": "upload-test@example.com",
+                      "email": "%s",
                       "password": "password123"
                     }
-                    """)
+                    """.formatted(emailAddress))
         )
             .andExpect(status().isOk())
             .andReturn();

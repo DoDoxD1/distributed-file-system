@@ -41,7 +41,7 @@ public class UserStorageQuotaService {
             metadataService.lockUserRow(userId);
             String scopedLogicalPath = LogicalPathUtil.toScopedPath(userId, logicalPath);
             if (idempotencyKey != null) {
-                Optional<FileManifest> existingManifest = metadataService.findManifestByIdempotency(
+                Optional<FileManifest> existingManifest = metadataService.findManifestByIdempotencyInDuplicateSeries(
                     scopedLogicalPath,
                     idempotencyKey
                 );
@@ -59,7 +59,11 @@ public class UserStorageQuotaService {
                         + projectedStorageBytes + " > " + maxUserStorageBytes
                 );
             }
-            return gatewayService.uploadFile(scopedLogicalPath, payload, idempotencyKey);
+            String resolvedLogicalPath = metadataService.resolveNextAvailableLogicalPath(
+                userId,
+                scopedLogicalPath
+            );
+            return gatewayService.uploadFile(resolvedLogicalPath, payload, idempotencyKey);
         });
     }
 }

@@ -29,7 +29,6 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -94,16 +93,9 @@ public class ServiceConfiguration {
     public OperationalStatusService operationalStatusService(
         JdbcTemplate jdbcTemplate,
         TimeProvider timeProvider,
-        ObjectProvider<BuildProperties> buildPropertiesProvider,
-        @Value("${spring.application.name}") String applicationName
+        @Value("${spring.application.name}") String applicationName,
+        @Value("${spring.application.version:dev}") String applicationVersion
     ) {
-        BuildProperties buildProperties = buildPropertiesProvider.getIfAvailable();
-        String applicationVersion = buildProperties != null
-            ? buildProperties.getVersion()
-            : ServiceConfiguration.class.getPackage().getImplementationVersion();
-        if (applicationVersion == null || applicationVersion.isBlank()) {
-            applicationVersion = "dev";
-        }
         return new OperationalStatusService(
             jdbcTemplate,
             timeProvider,
