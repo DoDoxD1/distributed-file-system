@@ -21,5 +21,6 @@ jobs:
             cd ~/distributed-file-system
             git fetch origin main
             git reset --hard origin/main
-            docker compose up -d --build --remove-orphans
+            docker compose down
+            docker compose up -d --build
             echo "Deployment completed successfully!"
