@@ -33,6 +33,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -46,6 +47,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Strongly consistent in-memory authority for paths, versions, manifests, and chunk references.
  */
 public class MetadataService {
+
+    private static final Pattern DUPLICATE_FILE_NAME_PATTERN = Pattern.compile("^(.*) \\((\\d+)\\)$");
 
     private final JdbcTemplate jdbcTemplate;
     private final NamedParameterJdbcTemplate namedParameterJdbcTemplate;
@@ -96,6 +99,46 @@ public class MetadataService {
             return Optional.empty();
         }
         return Optional.of(copyManifest(manifest));
+    }
+
+    /**
+     * Looks up a committed manifest by idempotency key across duplicate-name variants.
+     *
+     * @param logicalPath requested file path
+     * @param idempotencyKey idempotency key
+     * @return manifest when already committed; empty otherwise
+     */
+    public Optional<FileManifest> findManifestByIdempotencyInDuplicateSeries(
+        String logicalPath,
+        String idempotencyKey
+    ) {
+        String normalizedPath = requireNonBlank(logicalPath, "logicalPath");
+        String normalizedIdempotencyKey = requireNonBlank(idempotencyKey, "idempotencyKey");
+        DuplicateLogicalPathSeries pathSeries = DuplicateLogicalPathSeries.fromLogicalPath(
+            normalizedPath
+        );
+
+        List<String> versionIds = jdbcTemplate.query(
+            """
+            select k.version_id
+            from dfs_idempotency_keys k
+            join dfs_file_versions v on v.version_id = k.version_id
+            where k.idempotency_key = ?
+                and (k.logical_path = ? or k.logical_path like ?)
+            order by v.created_at desc, k.version_id desc
+            """,
+            (resultSet, rowNum) -> resultSet.getString("version_id"),
+            normalizedIdempotencyKey,
+            normalizedPath,
+            pathSeries.directoryLikePattern()
+        );
+        for (String versionId : versionIds) {
+            FileManifest manifest = loadManifestByVersionId(versionId);
+            if (manifest != null && pathSeries.matches(manifest.logicalPath())) {
+                return Optional.of(copyManifest(manifest));
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -364,6 +407,36 @@ public class MetadataService {
         return activeStorageBytes == null ? 0L : activeStorageBytes;
     }
 
+    private Set<String> findOccupiedLogicalPaths(String ownerUserId, String directoryPath) {
+        Set<String> occupiedLogicalPaths = new HashSet<>();
+        for (FileListing listing : listFiles(directoryPath)) {
+            if (Objects.equals(parentLogicalPath(listing.logicalPath()), directoryPath)) {
+                occupiedLogicalPaths.add(listing.logicalPath());
+            }
+        }
+
+        List<String> pendingLogicalPaths = jdbcTemplate.query(
+            """
+            select logical_path
+            from dfs_upload_sessions
+            where owner_user_id = ?
+                and committed_version_id is null
+                and expires_at > ?
+                and logical_path like ?
+            """,
+            (resultSet, rowNum) -> resultSet.getString("logical_path"),
+            ownerUserId,
+            toTimestamp(timeProvider.now()),
+            directoryLikePattern(directoryPath)
+        );
+        for (String pendingLogicalPath : pendingLogicalPaths) {
+            if (Objects.equals(parentLogicalPath(pendingLogicalPath), directoryPath)) {
+                occupiedLogicalPaths.add(pendingLogicalPath);
+            }
+        }
+        return occupiedLogicalPaths;
+    }
+
     public void lockUserRow(String userId) {
         String normalizedUserId = requireNonBlank(userId, "userId");
         String lockedUserId = querySingleValue(
@@ -418,6 +491,96 @@ public class MetadataService {
         return Optional.of(copyDirectUploadSession(sessionRow.toDirectUploadSession()));
     }
 
+    /**
+     * Looks up a direct upload session by idempotency key across duplicate-name variants.
+     *
+     * @param ownerUserId owning user ID
+     * @param logicalPath requested file path
+     * @param idempotencyKey idempotency key
+     * @return existing direct upload session; empty otherwise
+     */
+    public Optional<DirectUploadSession> findUploadSessionByIdempotencyInDuplicateSeries(
+        String ownerUserId,
+        String logicalPath,
+        String idempotencyKey
+    ) {
+        String normalizedOwnerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        String normalizedLogicalPath = requireNonBlank(logicalPath, "logicalPath");
+        String normalizedIdempotencyKey = requireNonBlank(idempotencyKey, "idempotencyKey");
+        DuplicateLogicalPathSeries pathSeries = DuplicateLogicalPathSeries.fromLogicalPath(
+            normalizedLogicalPath
+        );
+
+        List<UploadSessionRow> sessionRows = jdbcTemplate.query(
+            """
+            select session_id, owner_user_id, logical_path, expected_checksum_sha256,
+                expected_size_bytes, content_type, idempotency_key, staging_object_key,
+                status, resolved_object_id, committed_version_id, created_at, expires_at
+            from dfs_upload_sessions
+            where owner_user_id = ?
+                and idempotency_key = ?
+                and (logical_path = ? or logical_path like ?)
+            order by created_at desc, session_id desc
+            """,
+            (resultSet, rowNum) -> new UploadSessionRow(
+                resultSet.getString("session_id"),
+                resultSet.getString("owner_user_id"),
+                resultSet.getString("logical_path"),
+                resultSet.getString("expected_checksum_sha256"),
+                resultSet.getLong("expected_size_bytes"),
+                resultSet.getString("content_type"),
+                resultSet.getString("idempotency_key"),
+                resultSet.getString("staging_object_key"),
+                DirectUploadSessionStatus.valueOf(resultSet.getString("status")),
+                resultSet.getString("resolved_object_id"),
+                resultSet.getString("committed_version_id"),
+                getInstant(resultSet, "created_at"),
+                getInstant(resultSet, "expires_at")
+            ),
+            normalizedOwnerUserId,
+            normalizedIdempotencyKey,
+            normalizedLogicalPath,
+            pathSeries.directoryLikePattern()
+        );
+        for (UploadSessionRow sessionRow : sessionRows) {
+            if (pathSeries.matches(sessionRow.logicalPath())) {
+                return Optional.of(copyDirectUploadSession(sessionRow.toDirectUploadSession()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Resolves the next available logical path in a duplicate-name series.
+     *
+     * @param ownerUserId owning user ID
+     * @param logicalPath requested file path
+     * @return requested path when available; otherwise the next suffixed variant
+     */
+    public String resolveNextAvailableLogicalPath(String ownerUserId, String logicalPath) {
+        String normalizedOwnerUserId = requireNonBlank(ownerUserId, "ownerUserId");
+        String normalizedLogicalPath = requireNonBlank(logicalPath, "logicalPath");
+        DuplicateLogicalPathSeries pathSeries = DuplicateLogicalPathSeries.fromLogicalPath(
+            normalizedLogicalPath
+        );
+        Set<String> occupiedLogicalPaths = findOccupiedLogicalPaths(
+            normalizedOwnerUserId,
+            pathSeries.directoryPath()
+        );
+        if (!occupiedLogicalPaths.contains(normalizedLogicalPath)) {
+            return normalizedLogicalPath;
+        }
+
+        int maxCounter = 0;
+        for (String occupiedLogicalPath : occupiedLogicalPaths) {
+            Integer counter = pathSeries.counterFor(occupiedLogicalPath);
+            if (counter != null && counter > maxCounter) {
+                maxCounter = counter;
+            }
+        }
+        return pathSeries.pathForCounter(maxCounter + 1);
+    }
+
     public DirectUploadSession createUploadSession(
         String sessionId,
         String ownerUserId,
@@ -450,6 +613,21 @@ public class MetadataService {
         try {
             DirectUploadSession createdSession = transactionTemplate.execute(transactionStatus -> {
                 lockUserRow(normalizedOwnerUserId);
+                if (normalizedIdempotencyKey != null) {
+                    Optional<DirectUploadSession> existingSession = findUploadSessionByIdempotencyInDuplicateSeries(
+                        normalizedOwnerUserId,
+                        normalizedLogicalPath,
+                        normalizedIdempotencyKey
+                    );
+                    if (existingSession.isPresent()) {
+                        return existingSession.get();
+                    }
+                }
+
+                String resolvedLogicalPath = resolveNextAvailableLogicalPath(
+                    normalizedOwnerUserId,
+                    normalizedLogicalPath
+                );
                 jdbcTemplate.update(
                     """
                     insert into dfs_upload_sessions(
@@ -470,7 +648,7 @@ public class MetadataService {
                     """,
                     normalizedSessionId,
                     normalizedOwnerUserId,
-                    normalizedLogicalPath,
+                    resolvedLogicalPath,
                     normalizedChecksumSha256,
                     sizeBytes,
                     normalizedContentType,
@@ -487,7 +665,7 @@ public class MetadataService {
             return copyDirectUploadSession(Objects.requireNonNull(createdSession));
         } catch (DuplicateKeyException error) {
             if (normalizedIdempotencyKey != null) {
-                Optional<DirectUploadSession> existingSession = findUploadSessionByIdempotency(
+                Optional<DirectUploadSession> existingSession = findUploadSessionByIdempotencyInDuplicateSeries(
                     normalizedOwnerUserId,
                     normalizedLogicalPath,
                     normalizedIdempotencyKey
@@ -1215,6 +1393,26 @@ public class MetadataService {
         }
     }
 
+    private static String parentLogicalPath(String logicalPath) {
+        int lastSlashIndex = logicalPath.lastIndexOf('/');
+        if (lastSlashIndex <= 0) {
+            return "/";
+        }
+        return logicalPath.substring(0, lastSlashIndex);
+    }
+
+    private static String fileName(String logicalPath) {
+        int lastSlashIndex = logicalPath.lastIndexOf('/');
+        if (lastSlashIndex < 0 || lastSlashIndex == logicalPath.length() - 1) {
+            throw new ValidationException("logicalPath must point to a file: " + logicalPath);
+        }
+        return logicalPath.substring(lastSlashIndex + 1);
+    }
+
+    private static String directoryLikePattern(String directoryPath) {
+        return "/".equals(directoryPath) ? "/%" : directoryPath + "/%";
+    }
+
     private String findFileIdByPath(String logicalPath) {
         return querySingleValue(
             "select file_id from dfs_files where logical_path = ?",
@@ -1723,6 +1921,73 @@ public class MetadataService {
             throw new ValidationException(fieldName + " must be non-empty");
         }
         return value.strip();
+    }
+
+    private record DuplicateLogicalPathSeries(
+        String directoryPath,
+        String baseFileName,
+        String stem,
+        String extension
+    ) {
+
+        private static DuplicateLogicalPathSeries fromLogicalPath(String logicalPath) {
+            String directoryPath = parentLogicalPath(logicalPath);
+            String fileName = fileName(logicalPath);
+            int extensionSeparatorIndex = fileName.lastIndexOf('.');
+            String stem = extensionSeparatorIndex <= 0
+                ? fileName
+                : fileName.substring(0, extensionSeparatorIndex);
+            String extension = extensionSeparatorIndex <= 0 ? "" : fileName.substring(extensionSeparatorIndex);
+            var matcher = DUPLICATE_FILE_NAME_PATTERN.matcher(stem);
+            String baseStem = matcher.matches() ? matcher.group(1) : stem;
+            return new DuplicateLogicalPathSeries(directoryPath, fileName, baseStem, extension);
+        }
+
+        private String directoryLikePattern() {
+            return MetadataService.directoryLikePattern(directoryPath);
+        }
+
+        private boolean matches(String logicalPath) {
+            if (!Objects.equals(parentLogicalPath(logicalPath), directoryPath)) {
+                return false;
+            }
+            return counterFor(logicalPath) != null;
+        }
+
+        private Integer counterFor(String logicalPath) {
+            if (!Objects.equals(parentLogicalPath(logicalPath), directoryPath)) {
+                return null;
+            }
+            return counterForFileName(fileName(logicalPath));
+        }
+
+        private String pathForCounter(int counter) {
+            String candidateFileName = counter == 0
+                ? baseFileName
+                : stem + " (" + counter + ")" + extension;
+            return "/".equals(directoryPath) ? "/" + candidateFileName : directoryPath + "/" + candidateFileName;
+        }
+
+        private Integer counterForFileName(String candidateFileName) {
+            int extensionSeparatorIndex = candidateFileName.lastIndexOf('.');
+            String candidateStem = extensionSeparatorIndex <= 0
+                ? candidateFileName
+                : candidateFileName.substring(0, extensionSeparatorIndex);
+            String candidateExtension = extensionSeparatorIndex <= 0
+                ? ""
+                : candidateFileName.substring(extensionSeparatorIndex);
+            if (!Objects.equals(candidateExtension, extension)) {
+                return null;
+            }
+            if (Objects.equals(candidateStem, stem)) {
+                return 0;
+            }
+            var matcher = DUPLICATE_FILE_NAME_PATTERN.matcher(candidateStem);
+            if (!matcher.matches() || !Objects.equals(matcher.group(1), stem)) {
+                return null;
+            }
+            return Integer.parseInt(matcher.group(2));
+        }
     }
 
     private record ManifestRow(

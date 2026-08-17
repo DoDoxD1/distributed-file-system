@@ -64,17 +64,6 @@ public class DirectTransferService {
         String normalizedContentType = normalizeNullable(contentType);
         String normalizedIdempotencyKey = normalizeNullableNonBlank(idempotencyKey, "idempotencyKey");
 
-        if (normalizedIdempotencyKey != null) {
-            Optional<DirectUploadSession> existingSession = metadataService.findUploadSessionByIdempotency(
-                authenticatedUser.userId(),
-                scopedLogicalPath,
-                normalizedIdempotencyKey
-            );
-            if (existingSession.isPresent()) {
-                return toPublicSession(authenticatedUser.userId(), existingSession.get());
-            }
-        }
-
         Optional<StoredObject> existingStoredObject = metadataService.findStoredObject(
             authenticatedUser.userId(),
             normalizedChecksumSha256,

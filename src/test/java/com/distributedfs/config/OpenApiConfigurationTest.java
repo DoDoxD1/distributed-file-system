@@ -15,19 +15,21 @@ class OpenApiConfigurationTest {
 
     @Test
     void distributedFsOpenApiReturnsExpectedMetadata() {
-        OpenApiConfiguration configuration = new OpenApiConfiguration();
+        OpenApiConfiguration configuration = new OpenApiConfiguration("v1");
 
         OpenAPI openApi = configuration.distributedFsOpenApi();
         Info info = openApi.getInfo();
 
         assertNotNull(openApi);
         assertNotNull(info);
-        assertEquals("Distributed File Storage API", info.getTitle());
+        assertEquals(
+            "Distributed File Storage System API(Google Drive/ Onedrive Clone)",
+            info.getTitle()
+        );
         assertEquals("v1", info.getVersion());
         assertNotNull(info.getContact());
-        assertEquals("Distributed File Storage Maintainer", info.getContact().getName());
-        assertNotNull(info.getLicense());
-        assertEquals("Internal/Personal Project", info.getLicense().getName());
+        assertEquals("Arihant Jain", info.getContact().getName());
+        assertNotNull(info.getDescription());
         assertNotNull(openApi.getComponents());
         SecurityScheme bearerScheme = openApi.getComponents().getSecuritySchemes()
             .get(OpenApiConfiguration.BEARER_AUTH_SCHEME);

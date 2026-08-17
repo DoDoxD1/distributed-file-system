@@ -26,6 +26,8 @@ class DirectTransferServiceTest {
 
     private static final String SAMPLE_SHA256 =
         "8f434346648f6b96df89dda901c5176b10a6d83961f9778f7f1449d84d35a32c";
+    private static final String ABC_SHA256 =
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
     @TempDir
     Path tempDir;
@@ -135,6 +137,61 @@ class DirectTransferServiceTest {
     }
 
     @Test
+    void createUploadSessionAllocatesDuplicateNameWhenSameFolderAlreadyContainsFile() {
+        LocalCluster cluster = buildCluster();
+        AuthenticatedUser user = cluster.authenticationService().register(
+            "duplicate-direct@example.com",
+            "password123",
+            null
+        ).user();
+        cluster.userFileService().uploadFile(user, "/docs/report.pdf", "base".getBytes(), null);
+
+        DirectUploadSession session = cluster.directTransferService().createUploadSession(
+            user,
+            "/docs/report.pdf",
+            SAMPLE_SHA256,
+            128,
+            "application/pdf",
+            null
+        );
+
+        assertEquals("/docs/report (1).pdf", session.logicalPath());
+        assertEquals(DirectUploadSessionStatus.AWAITING_UPLOAD, session.status());
+        assertTrue(session.uploadRequired());
+    }
+
+    @Test
+    void createUploadSessionReplaysAllocatedDuplicatePathForSameIdempotencyKey() {
+        LocalCluster cluster = buildCluster();
+        AuthenticatedUser user = cluster.authenticationService().register(
+            "duplicate-direct-idempotent@example.com",
+            "password123",
+            null
+        ).user();
+        cluster.userFileService().uploadFile(user, "/docs/report.pdf", "base".getBytes(), null);
+
+        DirectUploadSession firstSession = cluster.directTransferService().createUploadSession(
+            user,
+            "/docs/report.pdf",
+            SAMPLE_SHA256,
+            128,
+            "application/pdf",
+            "duplicate-request-123"
+        );
+        DirectUploadSession replayedSession = cluster.directTransferService().createUploadSession(
+            user,
+            "/docs/report.pdf",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            256,
+            "application/octet-stream",
+            "duplicate-request-123"
+        );
+
+        assertEquals("/docs/report (1).pdf", firstSession.logicalPath());
+        assertEquals(firstSession, replayedSession);
+    }
+
+    @Test
     void finalizeUploadSessionCommitsObjectBackedVersionAndDeletesStagingObject() {
         InMemoryOracleObjectStorageBucketClient bucketClient = new InMemoryOracleObjectStorageBucketClient();
         LocalCluster cluster = buildOracleCluster(bucketClient);
@@ -147,7 +204,7 @@ class DirectTransferServiceTest {
         DirectUploadSession session = cluster.directTransferService().createUploadSession(
             user,
             "/docs/report.pdf",
-            SAMPLE_SHA256,
+            ABC_SHA256,
             3,
             "application/pdf",
             "finalize-1"
@@ -157,7 +214,7 @@ class DirectTransferServiceTest {
             session.stagingObjectKey(),
             payload,
             "application/pdf",
-            Map.of("sha256", SAMPLE_SHA256)
+            Map.of("sha256", ABC_SHA256)
         );
 
         FileManifest manifest = cluster.directTransferService().finalizeUploadSession(
@@ -171,7 +228,7 @@ class DirectTransferServiceTest {
         assertFalse(bucketClient.objectExists(session.stagingObjectKey()));
         assertTrue(
             bucketClient.objectExists(
-                "users/" + user.userId() + "/objects/sha256/" + SAMPLE_SHA256 + "/3"
+                "users/" + user.userId() + "/objects/sha256/" + ABC_SHA256 + "/3"
             )
         );
         assertArrayEquals(

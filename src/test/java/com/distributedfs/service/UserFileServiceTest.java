@@ -216,6 +216,55 @@ class UserFileServiceTest {
     }
 
     @Test
+    void uploadStoresDuplicateNamesWithIncrementingSuffixes() {
+        LocalCluster cluster = buildCluster();
+        AuthenticatedUser user = cluster.authenticationService().register(
+            "duplicates@example.com",
+            "password123",
+            null
+        ).user();
+
+        FileManifest firstManifest = cluster.userFileService().uploadFile(
+            user,
+            "/docs/report.txt",
+            "first".getBytes(),
+            null
+        );
+        FileManifest secondManifest = cluster.userFileService().uploadFile(
+            user,
+            "/docs/report.txt",
+            "second".getBytes(),
+            null
+        );
+        FileManifest thirdManifest = cluster.userFileService().uploadFile(
+            user,
+            "/docs/report.txt",
+            "third".getBytes(),
+            null
+        );
+
+        assertEquals("/docs/report.txt", firstManifest.logicalPath());
+        assertEquals("/docs/report (1).txt", secondManifest.logicalPath());
+        assertEquals("/docs/report (2).txt", thirdManifest.logicalPath());
+        assertArrayEquals(
+            "first".getBytes(),
+            cluster.userFileService().downloadFile(user, "/docs/report.txt", null)
+        );
+        assertArrayEquals(
+            "second".getBytes(),
+            cluster.userFileService().downloadFile(user, "/docs/report (1).txt", null)
+        );
+        assertArrayEquals(
+            "third".getBytes(),
+            cluster.userFileService().downloadFile(user, "/docs/report (2).txt", null)
+        );
+        assertEquals(
+            List.of("/docs/report (1).txt", "/docs/report (2).txt", "/docs/report.txt"),
+            cluster.userFileService().listFiles(user, "/docs").stream().map(FileListing::logicalPath).toList()
+        );
+    }
+
+    @Test
     void uploadRejectsWhenActiveVersionsWouldExceedUserQuota() {
         LocalCluster cluster = buildCluster();
         cluster.properties().setMaxUserStorageBytes(10);
@@ -260,6 +309,39 @@ class UserFileServiceTest {
 
         assertEquals("/docs/second.txt", manifest.logicalPath());
         assertEquals(6, manifest.sizeBytes());
+    }
+
+    @Test
+    void idempotentReplayReturnsAllocatedDuplicatePath() {
+        LocalCluster cluster = buildCluster();
+        AuthenticatedUser user = cluster.authenticationService().register(
+            "duplicate-idempotent@example.com",
+            "password123",
+            null
+        ).user();
+
+        cluster.userFileService().uploadFile(user, "/docs/request.txt", "base".getBytes(), null);
+
+        FileManifest firstManifest = cluster.userFileService().uploadFile(
+            user,
+            "/docs/request.txt",
+            "12345".getBytes(),
+            "request-duplicate-123"
+        );
+        FileManifest replayedManifest = cluster.userFileService().uploadFile(
+            user,
+            "/docs/request.txt",
+            "abcde".getBytes(),
+            "request-duplicate-123"
+        );
+
+        assertEquals("/docs/request (1).txt", firstManifest.logicalPath());
+        assertEquals(firstManifest.logicalPath(), replayedManifest.logicalPath());
+        assertEquals(firstManifest.versionId(), replayedManifest.versionId());
+        assertArrayEquals(
+            "12345".getBytes(),
+            cluster.userFileService().downloadFile(user, "/docs/request (1).txt", null)
+        );
     }
 
     @Test
