@@ -3,7 +3,7 @@ WORKDIR /workspace
 COPY pom.xml ./
 RUN mvn -B dependency:go-offline
 COPY src ./src
-RUN mvn -B -DskipTests package && cp target/*.jar /workspace/app.jar
+RUN mvn -B -Dmaven.test.skip=true package && cp target/*.jar /workspace/app.jar
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
