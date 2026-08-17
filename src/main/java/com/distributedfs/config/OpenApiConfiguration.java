@@ -19,6 +19,8 @@ public class OpenApiConfiguration {
     private static final String LINKEDIN_PROFILE_URL = "http://linkedin.com/in/arihant-jain-software-engineer/";
     private static final String GITHUB_REPOSITORY_URL = "https://github.com/DoDoxD1/distributed-file-system";
     private static final String LEETCODE_PROFILE_URL = "https://leetcode.com/u/aunu/";
+    private static final String LIVE_UI_URL = "https://dfs-ui.duckdns.org";
+
 
     @Bean
     public OpenAPI distributedFsOpenApi() {
@@ -40,7 +42,8 @@ public class OpenApiConfiguration {
                             + "operations.\n\n"
                             + "[💼 LinkedIn](" + LINKEDIN_PROFILE_URL + ") | "
                             + "[💻 GitHub Repo](" + GITHUB_REPOSITORY_URL + ") | "
-                            + "[🧠 LeetCode](" + LEETCODE_PROFILE_URL + ")"
+                            + "[🧠 LeetCode](" + LEETCODE_PROFILE_URL + ") | "
+                            + "[🌐 Live UI](" + LIVE_UI_URL + ")"
                     )
                     .version("0.3")
                     .contact(
