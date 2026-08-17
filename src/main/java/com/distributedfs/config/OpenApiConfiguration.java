@@ -5,6 +5,7 @@ import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -15,6 +16,15 @@ import org.springframework.context.annotation.Configuration;
 public class OpenApiConfiguration {
 
     public static final String BEARER_AUTH_SCHEME = "bearerAuth";
+
+    private final String applicationVersion;
+
+    public OpenApiConfiguration(
+        @Value("${spring.application.version:dev}") String applicationVersion
+    ) {
+        this.applicationVersion = applicationVersion;
+    }
+
     private static final String WEBSITE_URL = "https://arihantjain.netlify.app/";
     private static final String LINKEDIN_PROFILE_URL = "http://linkedin.com/in/arihant-jain-software-engineer/";
     private static final String GITHUB_REPOSITORY_URL = "https://github.com/DoDoxD1/distributed-file-system";
@@ -45,7 +55,7 @@ public class OpenApiConfiguration {
                             + "[🧠 LeetCode](" + LEETCODE_PROFILE_URL + ") | "
                             + "[🌐 Live UI](" + LIVE_UI_URL + ")"
                     )
-                    .version("0.3")
+                    .version(applicationVersion)
                     .contact(
                         new Contact()
                             .name("Arihant Jain")

@@ -37,6 +37,7 @@ distributed:
 spring:
   application:
     name: distributed-file-storage-system
+    version: 0.2.3
   config:
     import: optional:file:.env[.properties]
   datasource:
