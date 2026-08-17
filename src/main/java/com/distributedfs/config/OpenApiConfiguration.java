@@ -34,7 +34,7 @@ public class OpenApiConfiguration {
             )
             .info(
                 new Info()
-                    .title("Distributed File Storage API(Google Drive/ Onedrive Clone)")
+                    .title("Distributed File Storage System API(Google Drive/ Onedrive Clone)")
                     .description(
                         "REST APIs for distributed file upload, download, versioning, and worker "
                             + "operations.\n\n"
