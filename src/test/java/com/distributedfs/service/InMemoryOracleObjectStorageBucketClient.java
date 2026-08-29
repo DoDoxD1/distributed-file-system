@@ -12,6 +12,9 @@ import java.util.Optional;
 final class InMemoryOracleObjectStorageBucketClient implements OracleObjectStorageBucketClient {
 
     private final Map<String, StoredObject> objects = new HashMap<>();
+    private String lastCopySourceObjectName;
+    private String lastCopyDestinationObjectName;
+    private Map<String, String> lastCopyMetadata;
 
     @Override
     public boolean objectExists(String objectName) {
@@ -97,6 +100,9 @@ final class InMemoryOracleObjectStorageBucketClient implements OracleObjectStora
         if (sourceObject == null) {
             throw new IllegalStateException("Missing source object: " + sourceObjectName);
         }
+        lastCopySourceObjectName = sourceObjectName;
+        lastCopyDestinationObjectName = destinationObjectName;
+        lastCopyMetadata = metadata == null ? null : Map.copyOf(metadata);
         objects.put(
             destinationObjectName,
             new StoredObject(
@@ -109,6 +115,18 @@ final class InMemoryOracleObjectStorageBucketClient implements OracleObjectStora
 
     @Override
     public void close() {
+    }
+
+    String lastCopySourceObjectName() {
+        return lastCopySourceObjectName;
+    }
+
+    String lastCopyDestinationObjectName() {
+        return lastCopyDestinationObjectName;
+    }
+
+    Map<String, String> lastCopyMetadata() {
+        return lastCopyMetadata;
     }
 
     private record StoredObject(

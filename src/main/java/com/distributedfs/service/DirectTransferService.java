@@ -261,7 +261,7 @@ public class DirectTransferService {
             bucketClient.copyObject(
                 session.stagingObjectKey(),
                 canonicalObjectKey,
-                Map.of(CHECKSUM_METADATA_KEY, session.checksumSha256())
+                null
             );
         }
         return metadataService.createStoredObject(

@@ -45,6 +45,7 @@ public class OciOracleObjectStorageBucketClient implements OracleObjectStorageBu
     private final String namespace;
     private final String bucket;
     private final String serviceEndpoint;
+    private final String destinationRegion;
     private final int maxRetries;
     private final long initialBackoffMillis;
 
@@ -57,6 +58,28 @@ public class OciOracleObjectStorageBucketClient implements OracleObjectStorageBu
         BuiltClient builtClient = buildClient(properties);
         this.client = builtClient.client();
         this.serviceEndpoint = builtClient.serviceEndpoint();
+        this.destinationRegion = builtClient.regionId();
+    }
+
+    OciOracleObjectStorageBucketClient(
+        ObjectStorageClient client,
+        String namespace,
+        String bucket,
+        String serviceEndpoint,
+        String destinationRegion,
+        int maxRetries,
+        long initialBackoffMillis
+    ) {
+        this.client = Objects.requireNonNull(client, "client must be non-null");
+        this.namespace = Objects.requireNonNull(namespace, "namespace must be non-null").strip();
+        this.bucket = Objects.requireNonNull(bucket, "bucket must be non-null").strip();
+        this.serviceEndpoint = Objects.requireNonNull(serviceEndpoint, "serviceEndpoint must be non-null").strip();
+        this.destinationRegion = Objects.requireNonNull(
+            destinationRegion,
+            "destinationRegion must be non-null"
+        ).strip();
+        this.maxRetries = maxRetries;
+        this.initialBackoffMillis = initialBackoffMillis;
     }
 
     @Override
@@ -224,19 +247,21 @@ public class OciOracleObjectStorageBucketClient implements OracleObjectStorageBu
         Map<String, String> metadata
     ) {
         execute("copy", sourceObjectName + "->" + destinationObjectName, () -> {
-            CopyObjectDetails.Builder detailsBuilder = CopyObjectDetails.builder()
-                .sourceObjectName(sourceObjectName)
-                .destinationNamespace(namespace)
-                .destinationBucket(bucket)
-                .destinationObjectName(destinationObjectName);
-            if (metadata != null && !metadata.isEmpty()) {
-                detailsBuilder.destinationObjectMetadata(Map.copyOf(metadata));
+            try {
+                client.copyObject(buildCopyObjectRequest(sourceObjectName, destinationObjectName, metadata));
+            } catch (BmcException error) {
+                if (!shouldFallbackFromCopy(error)) {
+                    throw error;
+                }
+                LOGGER.warn(
+                    "oracle object storage copy fallback: source={}, destination={}, serviceCode={}, opcRequestId={}",
+                    sourceObjectName,
+                    destinationObjectName,
+                    error.getServiceCode(),
+                    error.getOpcRequestId()
+                );
+                copyObjectByReadAndWrite(sourceObjectName, destinationObjectName, metadata);
             }
-            client.copyObject(CopyObjectRequest.builder()
-                .namespaceName(namespace)
-                .bucketName(bucket)
-                .copyObjectDetails(detailsBuilder.build())
-                .build());
             return null;
         });
     }
@@ -268,7 +293,8 @@ public class OciOracleObjectStorageBucketClient implements OracleObjectStorageBu
             objectStorageClient.setRegion(region);
             return new BuiltClient(
                 objectStorageClient,
-                Region.formatDefaultRegionEndpoint(ObjectStorageClient.SERVICE, region)
+                Region.formatDefaultRegionEndpoint(ObjectStorageClient.SERVICE, region),
+                region.getRegionId()
             );
         } catch (IOException error) {
             throw new DistributedFsException(
@@ -292,7 +318,8 @@ public class OciOracleObjectStorageBucketClient implements OracleObjectStorageBu
                 if (!isRetryable(error) || attempt == maxRetries) {
                     throw new DistributedFsException(
                         "Oracle Object Storage " + operation + " failed for " + target
-                            + " with status " + error.getStatusCode(),
+                            + " with status " + error.getStatusCode()
+                            + formatErrorContext(error),
                         error
                     );
                 }
@@ -310,6 +337,21 @@ public class OciOracleObjectStorageBucketClient implements OracleObjectStorageBu
         throw new DistributedFsException(
             "Oracle Object Storage " + operation + " failed for " + target
         );
+    }
+
+    private String formatErrorContext(BmcException error) {
+        StringBuilder builder = new StringBuilder();
+        if (error.getServiceCode() != null && !error.getServiceCode().isBlank()) {
+            builder.append(", serviceCode=").append(error.getServiceCode());
+        }
+        if (error.getOpcRequestId() != null && !error.getOpcRequestId().isBlank()) {
+            builder.append(", opcRequestId=").append(error.getOpcRequestId());
+        }
+        String upstreamMessage = error.getUnmodifiedMessage();
+        if (upstreamMessage != null && !upstreamMessage.isBlank()) {
+            builder.append(", message=").append(upstreamMessage);
+        }
+        return builder.toString();
     }
 
     private boolean isRetryable(BmcException error) {
@@ -330,6 +372,54 @@ public class OciOracleObjectStorageBucketClient implements OracleObjectStorageBu
         }
     }
 
-    private record BuiltClient(ObjectStorageClient client, String serviceEndpoint) {
+    private CopyObjectRequest buildCopyObjectRequest(
+        String sourceObjectName,
+        String destinationObjectName,
+        Map<String, String> metadata
+    ) {
+        CopyObjectDetails.Builder detailsBuilder = CopyObjectDetails.builder()
+            .sourceObjectName(sourceObjectName)
+            .destinationRegion(destinationRegion)
+            .destinationNamespace(namespace)
+            .destinationBucket(bucket)
+            .destinationObjectName(destinationObjectName);
+        if (metadata != null && !metadata.isEmpty()) {
+            detailsBuilder.destinationObjectMetadata(Map.copyOf(metadata));
+        }
+        return CopyObjectRequest.builder()
+            .namespaceName(namespace)
+            .bucketName(bucket)
+            .copyObjectDetails(detailsBuilder.build())
+            .build();
+    }
+
+    private void copyObjectByReadAndWrite(
+        String sourceObjectName,
+        String destinationObjectName,
+        Map<String, String> metadata
+    ) {
+        ObjectStorageObjectInfo sourceObjectInfo = findObjectInfo(sourceObjectName).orElseThrow(
+            () -> new ChunkNotFoundException(
+                "Chunk object does not exist in Oracle Object Storage: " + sourceObjectName
+            )
+        );
+        Map<String, String> destinationMetadata = metadata == null
+            ? sourceObjectInfo.metadata()
+            : Map.copyOf(metadata);
+        byte[] payload = getObject(sourceObjectName);
+        putObject(
+            destinationObjectName,
+            payload,
+            sourceObjectInfo.contentType(),
+            destinationMetadata
+        );
+    }
+
+    private boolean shouldFallbackFromCopy(BmcException error) {
+        return error.getStatusCode() == 400
+            && "InsufficientServicePermissions".equals(error.getServiceCode());
+    }
+
+    private record BuiltClient(ObjectStorageClient client, String serviceEndpoint, String regionId) {
     }
 }
