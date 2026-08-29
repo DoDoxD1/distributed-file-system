@@ -221,15 +221,23 @@ class DirectTransferServiceTest {
             user,
             session.sessionId()
         );
+        String canonicalObjectKey = "users/" + user.userId() + "/objects/sha256/" + ABC_SHA256 + "/3";
 
         assertEquals("/docs/report.pdf", manifest.logicalPath());
         assertNotNull(manifest.versionId());
         assertTrue(manifest.chunkIds().isEmpty());
         assertFalse(bucketClient.objectExists(session.stagingObjectKey()));
+        assertEquals(session.stagingObjectKey(), bucketClient.lastCopySourceObjectName());
+        assertEquals(canonicalObjectKey, bucketClient.lastCopyDestinationObjectName());
+        assertNull(bucketClient.lastCopyMetadata());
         assertTrue(
             bucketClient.objectExists(
-                "users/" + user.userId() + "/objects/sha256/" + ABC_SHA256 + "/3"
+                canonicalObjectKey
             )
+        );
+        assertEquals(
+            ABC_SHA256,
+            bucketClient.findObjectInfo(canonicalObjectKey).orElseThrow().metadata().get("sha256")
         );
         assertArrayEquals(
             payload,

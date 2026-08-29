@@ -21,6 +21,10 @@ The implementation preserves control-plane/data-plane separation:
 - Background workers:
   - `BackgroundWorkerService` runs scan, repair, GC, and legacy local-to-bucket migration flows.
 
+### Direct transfer architecture decision
+
+The selected future direction for large file transfer is direct object transfer with API-issued signed URLs and user-level deduplication bounded by `(owner_user_id, sha256, size_bytes)`. The API remains the control plane, and object storage becomes the data plane.
+
 ## Package map
 
 - `com.distributedfs.config`
@@ -164,7 +168,7 @@ Fallback local metadata environment variables remain supported:
 - `DFS_METADATA_DATASOURCE_CONNECTION_TIMEOUT_MS`
 
 ## API contract summary
-
+, optional displayName
 ### Auth API (`/api/v1/auth`)
 
 - `POST /api/v1/auth/register`
@@ -178,7 +182,15 @@ Fallback local metadata environment variables remain supported:
 - `POST /api/v1/auth/refresh`
   - request: refresh token cookie
   - response: fresh bearer access token, expiry, authenticated user
-  - side effect: rotates refresh token cookie
+  - side effect: rotates refresh token cookie session
+
+### User API (`/api/v1/users`)
+
+- `PATCH /api/v1/users/me`
+  - request: `UpdateDisplayNameRequest{displayName}`
+  - response:`UrRespone` with updated diplayName
+  - requres bearer authenticati
+  - email cannot be changed via this endpoint
 - `POST /api/v1/auth/logout`
   - request: optional refresh token cookie
   - response: empty success response
