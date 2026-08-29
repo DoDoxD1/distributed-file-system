@@ -34,6 +34,7 @@ Scope: this file applies to the entire repository unless a deeper `AGENTS.md` ov
 - Route runtime-overridable values through centralized config (`application.yml`,
   `@ConfigurationProperties`) with environment-variable overrides.
 - Keep a current list of module config files in `DEVELOPER_GUIDE.md` with short descriptions.
+- Per-user storage quota enforcement must count all active versions, including multiple active versions of the same logical file.
 
 ## Readability and Maintainability
 
@@ -67,6 +68,11 @@ Scope: this file applies to the entire repository unless a deeper `AGENTS.md` ov
 - Mask or avoid PHI/PII in logs, test fixtures, and exported artifacts.
 - Use least-privilege access and minimal data retention.
 - Treat downloaded records as sensitive; clean temporary files promptly.
+- CORS configuration is centralized in `WebConfiguration` using `DistributedFsProperties.corsAllowedOriginPatterns`.
+  - Default origins: `http://localhost:*` and `http://dfs-ui.duckdns.org`
+  - Configured via `distributed.fs.cors-allowed-origin-patterns` / `DISTRIBUTED_FS_CORS_ALLOWED_ORIGIN_PATTERNS`
+  - Trailing slashes are normalized away in property binding
+  - Uses `allowCredentials(true)`, methods GET/POST/PUT/DELETE/OPTIONS, and allowed headers '*'
 
 ## Java-Specific Best Practices
 
